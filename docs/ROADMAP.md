@@ -104,6 +104,19 @@ for Claude Code and Codex.
 Tests: drive the server with a minimal MCP client script; same assertions as
 0.3 through the tool interface.
 
+Outcome (0.5.0): `sankofa-mcp`, also run as `sankofad mcp`, is built on the
+official C# SDK's low-level API and runs the CLI for each tool. It is a
+separate binary, because linking the SDK into `sankofad` slowed the edit gate
+from 3.3 to 5.1 ms. `sim/mcp.py` ran four clients at once, two named Claude
+Code and two Codex, against a daemon killed twice a run. It found duplicate
+ids from concurrent fallback writers, now fixed by a lock on the ledger file;
+after the fix, about 540 writes a run with none lost or doubled. Exit, real:
+`claude -p` and `codex exec` wrote to one ledger on one repo in the same
+sitting, and Codex's claim was refused with the Claude Code holder named. Codex
+starts MCP servers without `XDG_RUNTIME_DIR`, so the socket path now falls back
+to `/run/user/<uid>`. Codex needs `default_tools_approval_mode = "approve"` on
+the server to call the tools from `codex exec`.
+
 ## 0.6 · watcher and bridge
 
 Deliver: inotify over registered worktrees; `overlap` event when two trees

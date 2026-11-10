@@ -143,7 +143,14 @@ claude mcp add --scope user sankofa -- sankofad mcp
 [mcp_servers.sankofa]
 command = "sankofad"
 args = ["mcp"]
+# optional: let `codex exec` call these tools without asking (it refuses otherwise)
+# default_tools_approval_mode = "approve"
 ```
+
+Claude Code passes its session id to MCP servers, so a claim made through MCP
+and an edit checked by the gate have the same holder. Codex passes no session
+id, so every Codex session is one holder, `- [mcp:codex-mcp-client]`: Codex
+sessions are kept apart from Claude Code sessions, not from each other.
 
 ## Simulations
 

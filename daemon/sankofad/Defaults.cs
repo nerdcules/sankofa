@@ -7,8 +7,13 @@ static class Defaults
         var env = Environment.GetEnvironmentVariable("SANKOFA_SOCKET");
         if (!string.IsNullOrEmpty(env)) return env;
         var run = Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR");
+        // clients may strip the environment (Codex does for MCP servers): use systemd's runtime dir
+        if (string.IsNullOrEmpty(run) && Directory.Exists($"/run/user/{Uid()}")) run = $"/run/user/{Uid()}";
         return string.IsNullOrEmpty(run) ? $"/tmp/sankofa-{Environment.UserName}/sankofad.sock" : Path.Combine(run, "sankofa", "sankofad.sock");
     }
+
+    [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "getuid")] static extern uint GetUid();
+    static uint Uid() => GetUid();
 
     public static string Db()
     {

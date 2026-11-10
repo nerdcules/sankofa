@@ -80,6 +80,12 @@ $S note "after the truncation"
 assert_eq "$(lines .sankofa/ledger.jsonl)" $((total + 2)) "restored, flagged, then appended"
 assert_contains "$(tail -n 2 .sankofa/ledger.jsonl | head -n 1)" "restored the rest from sankofad" "restore is flagged"
 
+# a client that strips XDG_RUNTIME_DIR (Codex does for MCP servers) still finds /run/user/<uid>
+if [ -d "/run/user/$(id -u)" ]; then
+  out=$(env -u SANKOFA_SOCKET -u XDG_RUNTIME_DIR "$S" daemon 2>&1 || :)
+  assert_contains "$out" "/run/user/$(id -u)/sankofa/sankofad.sock" "socket path without XDG_RUNTIME_DIR"
+fi
+
 # a second daemon on the same socket refuses to start
 set +e; "$SANKOFAD" serve --socket "$SANKOFA_SOCKET" --db "$TD/other.db" 2>"$T/second.err"; rc=$?; set -e
 assert_eq "$rc" 1 "second daemon exits"
