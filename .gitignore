@@ -4,3 +4,11 @@ bin/out/
 *.db
 *.db-journal
 __pycache__/
+packaging/arch/src/
+packaging/arch/pkg/
+packaging/arch/sankofa/
+packaging/arch/*.pkg.tar.*
+daemon/*/bin/
+daemon/*/obj/
+tests/0.3/Sankofa.Tests/bin/
+tests/0.3/Sankofa.Tests/obj/

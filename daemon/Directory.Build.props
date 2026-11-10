@@ -1,0 +1,8 @@
+<Project>
+  <!-- sankofa runs on Linux (Unix sockets, systemd, libsqlite3). -->
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.Versioning.SupportedOSPlatformAttribute">
+      <_Parameter1>linux</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+</Project>

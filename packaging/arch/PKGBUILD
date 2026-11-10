@@ -1,0 +1,39 @@
+# Maintainer: nerdcules
+# Build:   cd packaging/arch && makepkg -si
+# Local:   SANKOFA_SRC="git+file://$PWD/../..#branch=main" makepkg -si   (unreleased tree)
+pkgname=sankofa
+pkgver=0.3.0
+pkgrel=1
+pkgdesc="Handoff ledger and path leases for many AI coding sessions on one codebase"
+arch=('x86_64')
+url="https://github.com/nerdcules/sankofa"
+license=('MIT')
+depends=('sh' 'jq' 'git' 'sqlite' 'inotify-tools' 'libnotify')
+makedepends=('dotnet-sdk' 'clang')
+options=('!strip' '!debug')
+source=("sankofa::${SANKOFA_SRC:-git+https://github.com/nerdcules/sankofa.git#tag=v$pkgver}")
+sha256sums=('SKIP')
+
+build() {
+  cd sankofa
+  export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
+  dotnet publish daemon/sankofad -c Release -r linux-x64 -o out --nologo -v quiet
+}
+
+check() {
+  cd sankofa
+  SANKOFA_DAEMON_BIN="$PWD/out/sankofad" sh tests/0.3/test_daemon.sh
+}
+
+package() {
+  cd sankofa
+  install -Dm755 out/sankofad "$pkgdir/usr/bin/sankofad"
+  install -Dm755 bin/sankofa "$pkgdir/usr/bin/sankofa"
+  install -Dm755 bin/sankofa-watch "$pkgdir/usr/bin/sankofa-watch"
+  for u in sankofad.service sankofa-watch.service; do
+    sed 's|@BIN@|/usr/bin|g' "systemd/$u" | install -Dm644 /dev/stdin "$pkgdir/usr/lib/systemd/user/$u"
+  done
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+  install -Dm644 AGENTS.md "$pkgdir/usr/share/doc/$pkgname/AGENTS.md"
+}

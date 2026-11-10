@@ -28,7 +28,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CLI = os.path.join(ROOT, "bin", "sankofa")
 ARCHETYPES = [("ask", 25), ("work", 35), ("finish", 15), ("resume", 10), ("fanout", 10), ("human-step", 5)]
 CLEAN_ENV = ("CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID", "SANKOFA_SESSION", "SANKOFA_AGENT",
-             "SANKOFA_REQUIRE_NOTE")
+             "SANKOFA_REQUIRE_NOTE", "SANKOFA_SOCKET", "SANKOFA_NO_DAEMON")
 
 
 def ms_now():
@@ -38,7 +38,10 @@ def ms_now():
 class Repo:
     """A git working tree with a sankofa ledger, plus a transcript directory outside it."""
 
-    def __init__(self, enforce, base=None):
+    def __init__(self, enforce, base=None, socket=None):
+        """socket: a private sankofad to write through; None means the local ledger only,
+        so a simulation never touches the user's real daemon."""
+        self.socket = socket
         self.dir = tempfile.mkdtemp(prefix="sankofa-week-", dir=base)
         self.tx = tempfile.mkdtemp(prefix="sankofa-tx-", dir=base)
         self.enforce = enforce
@@ -61,6 +64,10 @@ class Repo:
     def env(self, session):
         e = {k: v for k, v in os.environ.items() if k not in CLEAN_ENV}
         e["SANKOFA_SESSION"] = session or "-"
+        if self.socket:
+            e["SANKOFA_SOCKET"] = self.socket
+        else:
+            e["SANKOFA_NO_DAEMON"] = "1"
         if not self.enforce:
             e["SANKOFA_REQUIRE_NOTE"] = "0"
         return e
@@ -138,11 +145,12 @@ def schedule(today):
     return slots
 
 
-def run(rule, week, p_note, seed, base=None, on_start=None, on_day_end=None):
+def run(rule, week, p_note, seed, base=None, on_start=None, on_day_end=None, on_turn=None, socket=None):
     """Replay one week in a fresh repo. on_start(repo) runs before the first session;
-    on_day_end(day_index) runs after each day (used by sim/notify.py)."""
+    on_day_end(day_index) after each day (sim/notify.py); on_turn(repo, sid, kind, t, final)
+    after each turn's work and before its stop (sim/daemon.py)."""
     rng = random.Random(seed * 1000 + 7)  # behaviour rng, identical across rules
-    repo = Repo(enforce=(rule == "hook"), base=base)
+    repo = Repo(enforce=(rule == "hook"), base=base, socket=socket)
     open_items = [repo.cli("seed", "todo", "decide on the exit-2 rule")[1]]
     if on_start:
         on_start(repo)
@@ -194,6 +202,8 @@ def run(rule, week, p_note, seed, base=None, on_start=None, on_day_end=None):
                 if kind in ("work", "finish") and final and rng.random() < 0.3:
                     repo.tool(sid, "Bash"); repo.git("add", "-A"); repo.git("commit", "-qm", f"{sid} work")
 
+                if on_turn:
+                    on_turn(repo, sid, kind, t, final)
                 owed, has_open = s.unwritten_edits > 0, bool(open_items)
                 st["stops"] += 1
                 rc = repo.stop(sid, False)

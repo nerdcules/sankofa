@@ -10,7 +10,7 @@ e=$(jq -c . .sankofa/ledger.jsonl)
 assert_eq "$(printf '%s' "$e" | jq -r .type)" stop "type stop"
 assert_eq "$(printf '%s' "$e" | jq -r .session)" s1 "session id from payload"
 assert_eq "$(printf '%s' "$e" | jq -r .agent)" main "agent main"
-assert_contains "$(printf '%s' "$e" | jq -r .text)" "Finished the build." "summary from last message"
+assert_eq "$(printf '%s' "$e" | jq -r .text)" "Finished the build." "summary from last message, no trailing space"
 
 # subagent stop records agent name and never blocks, even with open items
 $S todo "something open" >/dev/null

@@ -53,6 +53,19 @@ the 0.1 markdown ledger when no daemon is running.
 Tests: xUnit unit tests for lease logic (overlap, expiry, renew); integration
 test that starts the daemon on a temp socket and drives it with the CLI.
 
+Outcome (0.3.0): the ledger stays the per-repo JSONL file, now mirrored by the
+daemon and imported from when the fallback wrote it, so 0.1 and 0.2 work
+unchanged and every shell test passes both with and without the daemon. Leases
+are claim events (expiry, dirty mark, renew, release, done); a session and its
+subagent are separate holders. Writes carry a nonce so an answer lost in a
+crash is never written twice. `sim/daemon.py` ran three repos for a simulated
+week each against one daemon killed with SIGKILL about eight times a run:
+about 1,000 acknowledged writes a run, about 320 through the fallback, none
+lost, doubled, or out of order, and database and files agreed. `sankofad
+bench`: startup 4 ms median, `ask` 0.07 ms median on an open socket and 2.5 ms
+as a fresh `sankofad send` process. Through the shell CLI (sh + jq) `ask` takes
+about 15 ms, so the 0.4 edit gate should call `sankofad send` directly.
+
 ## 0.4 · gates
 
 Deliver: `hooks/pre-edit.sh` (PreToolUse for Edit/Write/MultiEdit): asks

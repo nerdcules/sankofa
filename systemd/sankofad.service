@@ -1,0 +1,11 @@
+[Unit]
+Description=sankofa: ledger and path-lease daemon
+Documentation=https://github.com/nerdcules/sankofa
+
+[Service]
+ExecStart=@BIN@/sankofad serve
+Restart=on-failure
+RestartSec=1
+
+[Install]
+WantedBy=default.target

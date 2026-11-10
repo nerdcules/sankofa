@@ -1,7 +1,8 @@
 #!/bin/sh
 # Installs sankofa into ~/.local/bin, wires the Stop / SubagentStop hooks into
-# ~/.claude/settings.json, and installs the sankofa-watch systemd user service.
-# Idempotent. --uninstall reverses all three.
+# ~/.claude/settings.json, and installs the sankofad and sankofa-watch systemd user
+# services. Builds sankofad first if it is missing and the .NET SDK is present; without
+# it the CLI works on the local ledger alone. Idempotent. --uninstall reverses it all.
 # Env: XDG_BIN_HOME, CLAUDE_SETTINGS, XDG_CONFIG_HOME; SANKOFA_NO_SYSTEMD=1 writes the
 # unit but does not call systemctl (tests, containers).
 set -eu
@@ -9,7 +10,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 BIN=${XDG_BIN_HOME:-$HOME/.local/bin}
 SETTINGS=${CLAUDE_SETTINGS:-$HOME/.claude/settings.json}
 UNIT_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user
-UNIT=$UNIT_DIR/sankofa-watch.service
+UNITS="sankofad.service sankofa-watch.service"
 STOP_CMD="sankofa hook stop"
 SUB_CMD="sankofa hook subagent-stop"
 
@@ -22,8 +23,11 @@ sysd() { [ "${SANKOFA_NO_SYSTEMD:-0}" = 1 ] && return 0; command -v systemctl >/
          systemctl --user "$@" || echo "install: systemctl --user $* failed (no user session?)" >&2; }
 
 if [ "${1:-}" = --uninstall ]; then
-  [ -f "$UNIT" ] && { sysd disable --now sankofa-watch.service; rm -f "$UNIT"; sysd daemon-reload; }
-  rm -f "$BIN/sankofa" "$BIN/sankofa-watch"
+  for u in $UNITS; do
+    [ -f "$UNIT_DIR/$u" ] && { sysd disable --now "$u"; rm -f "$UNIT_DIR/$u"; }
+  done
+  sysd daemon-reload
+  rm -f "$BIN/sankofa" "$BIN/sankofa-watch" "$BIN/sankofad"
   backup
   tmp=$(mktemp)
   jq --arg a "$STOP_CMD" --arg b "$SUB_CMD" '
@@ -31,7 +35,7 @@ if [ "${1:-}" = --uninstall ]; then
       | if .hooks[ev] == [] then del(.hooks[ev]) else . end;
     strip("Stop"; $a) | strip("SubagentStop"; $b)
     | if .hooks == {} then del(.hooks) else . end' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
-  echo "install: removed $BIN/sankofa, $BIN/sankofa-watch, the hooks from $SETTINGS, and the watch service"
+  echo "install: removed the sankofa commands from $BIN, the hooks from $SETTINGS, and both services"
   exit 0
 fi
 
@@ -53,10 +57,26 @@ else
   echo "install: added Stop and SubagentStop hooks to $SETTINGS (backup kept beside it)"
 fi
 
+DAEMON=$HERE/bin/out/sankofad
+if [ ! -x "$DAEMON" ] && [ "${SANKOFA_NO_BUILD:-0}" != 1 ] && command -v dotnet >/dev/null; then
+  echo "install: building sankofad (dotnet publish, Native AOT)"
+  make -C "$HERE" build >/dev/null
+fi
+
 mkdir -p "$UNIT_DIR"
-sed "s|@BIN@|$BIN|g" "$HERE/systemd/sankofa-watch.service" > "$UNIT.tmp" && mv "$UNIT.tmp" "$UNIT"
+install_unit() { sed "s|@BIN@|$BIN|g" "$HERE/systemd/$1" > "$UNIT_DIR/$1.tmp" && mv "$UNIT_DIR/$1.tmp" "$UNIT_DIR/$1"; }
+if [ -x "$DAEMON" ]; then
+  ln -sf "$DAEMON" "$BIN/sankofad"
+  install_unit sankofad.service
+  echo "install: $BIN/sankofad -> $DAEMON"
+else
+  echo "install: sankofad not built (no .NET SDK?); the CLI will use the local ledger only" >&2
+fi
+install_unit sankofa-watch.service
 sysd daemon-reload
-sysd enable --now sankofa-watch.service
-sysd restart sankofa-watch.service
-echo "install: sankofa-watch user service installed at $UNIT"
+for u in $UNITS; do
+  [ -f "$UNIT_DIR/$u" ] || continue
+  sysd enable "$u"; sysd restart "$u"
+done
+echo "install: user services installed in $UNIT_DIR"
 echo "install: run 'sankofa init' and 'sankofa watch add' in each repo that should keep a ledger"
