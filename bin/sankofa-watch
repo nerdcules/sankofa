@@ -1,0 +1,81 @@
+#!/bin/sh
+# sankofa-watch - desktop toasts for new ledger entries in every registered repo.
+# Iteration 0.2. POSIX sh + jq + inotifywait + notify-send. Runs as a systemd user service.
+#
+#   sankofa-watch          watch forever (the service)
+#   sankofa-watch --once   scan once and exit (tests, cron, catch-up)
+#
+# Registry: $XDG_CONFIG_HOME/sankofa/watched, one repo root per line (sankofa watch add).
+# Offsets:  $XDG_STATE_HOME/sankofa/offsets, lines read per ledger, so nothing is toasted
+#           twice and entries written while the service was down are toasted on return.
+# Env: SANKOFA_TOAST_TYPES (default "awaiting"; add "note" to see every handoff note), SANKOFA_TOAST_BURST (default 5: more new
+#      entries than this in one scan become one summary toast), SANKOFA_WATCH_TIMEOUT
+#      (default 30: seconds between rescans if inotify misses a wakeup).
+set -eu
+CONF=${XDG_CONFIG_HOME:-$HOME/.config}/sankofa
+STATE=${XDG_STATE_HOME:-$HOME/.local/state}/sankofa
+REG=$CONF/watched
+OFF=$STATE/offsets
+TYPES=${SANKOFA_TOAST_TYPES:-awaiting}
+BURST=${SANKOFA_TOAST_BURST:-5}
+TIMEOUT=${SANKOFA_WATCH_TIMEOUT:-30}
+mkdir -p "$CONF" "$STATE"; touch "$REG" "$OFF"
+
+die() { printf 'sankofa-watch: %s\n' "$*" >&2; exit 1; }
+command -v jq >/dev/null || die "jq is required"
+
+offset_get() { awk -F'\t' -v r="$1" '$1 == r { o = $2 } END { print o }' "$OFF"; }
+offset_set() {
+  tmp=$OFF.tmp.$$
+  awk -F'\t' -v r="$1" '$1 != r' "$OFF" > "$tmp"
+  printf '%s\t%s\n' "$1" "$2" >> "$tmp"
+  mv "$tmp" "$OFF"
+}
+
+toast() { # urgency title body
+  notify-send -a sankofa -u "$1" "$2" "$3" 2>/dev/null || printf 'sankofa-watch: notify-send failed: %s\n' "$2" >&2
+}
+
+types_json() { printf '%s' "$TYPES" | tr ', ' '\n\n' | jq -Rsc 'split("\n") | map(select(length > 0))'; }
+
+scan_repo() { # root
+  root=$1; led=$root/.sankofa/ledger.jsonl
+  [ -f "$led" ] || return 0
+  n=$(wc -l < "$led" | tr -d ' ')
+  off=$(offset_get "$root")
+  if [ -z "$off" ]; then offset_set "$root" "$n"; return 0; fi  # first sight: no backlog
+  [ "$n" -eq "$off" ] && return 0
+  if [ "$n" -lt "$off" ]; then offset_set "$root" "$n"; return 0; fi  # ledger was replaced
+  name=$(basename "$root")
+  new=$(tail -n +"$((off + 1))" "$led" | head -n "$((n - off))" \
+        | jq -c --argjson t "$(types_json)" 'select(.type as $x | $t | index($x))' 2>/dev/null || true)
+  k=$(printf '%s' "$new" | grep -c . || true)
+  if [ "$k" -gt "$BURST" ]; then
+    body=$(printf '%s\n' "$new" | jq -rs 'group_by(.type) | map("\(length) \(.[0].type)") | join(", ")')
+    last=$(printf '%s\n' "$new" | jq -rs 'map(select(.type=="awaiting")) | last | .text // empty')
+    urg=normal; [ -n "$last" ] && urg=critical
+    toast "$urg" "$name: $k new entries" "$body${last:+
+latest awaiting: $last}"
+  elif [ "$k" -gt 0 ]; then
+    printf '%s\n' "$new" | jq -r '[.type, .agent, (.text | gsub("[\t\n]"; " "))] | @tsv' \
+    | while IFS="$(printf '\t')" read -r type agent text; do
+        case $type in
+          awaiting) toast critical "$name: awaiting you" "$text" ;;
+          *)        toast normal "$name: $type" "[$agent] $text" ;;
+        esac
+      done
+  fi
+  offset_set "$root" "$n"
+}
+
+scan() { while IFS= read -r r; do [ -n "$r" ] && scan_repo "$r"; done < "$REG"; }
+
+if [ "${1:-}" = --once ]; then scan; exit 0; fi
+command -v inotifywait >/dev/null || die "inotifywait is required (inotify-tools)"
+trap 'exit 0' TERM INT
+while :; do
+  scan
+  set -- "$CONF"
+  while IFS= read -r r; do [ -d "$r/.sankofa" ] && set -- "$@" "$r/.sankofa"; done < "$REG"
+  inotifywait -qq -t "$TIMEOUT" -e modify,create,moved_to,close_write "$@" 2>/dev/null || :
+done

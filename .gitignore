@@ -3,3 +3,4 @@ bin/obj/
 bin/out/
 *.db
 *.db-journal
+__pycache__/

@@ -1,0 +1,13 @@
+[Unit]
+Description=sankofa: desktop toasts for ledger events
+Documentation=https://github.com/nerdcules/sankofa
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart=@BIN@/sankofa-watch
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

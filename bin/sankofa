@@ -4,7 +4,7 @@
 # POSIX sh + jq. No daemon yet.
 set -eu
 
-VERSION=0.1.1
+VERSION=0.2.0
 
 usage() {
   cat <<'USAGE'
@@ -20,6 +20,9 @@ usage: sankofa <command> [args]
   log                  show the whole ledger
   hook stop            Stop hook: reads hook JSON on stdin
   hook subagent-stop   SubagentStop hook: reads hook JSON on stdin
+  watch add [dir]      toast this repo's awaiting items on the desktop (sankofa-watch)
+  watch list           show watched repos
+  watch rm [dir]       stop watching a repo
   version
 
 Ledger: <repo>/.sankofa/ledger.jsonl, append-only.
@@ -202,6 +205,33 @@ cmd_hook() {
   exit 0
 }
 
+watch_reg() { printf '%s' "${XDG_CONFIG_HOME:-$HOME/.config}/sankofa/watched"; }
+
+cmd_watch() {
+  REG=$(watch_reg); mkdir -p "$(dirname "$REG")"; [ -f "$REG" ] || : > "$REG"
+  sub=${1:-list}; [ $# -gt 0 ] && shift
+  case $sub in
+    add)
+      d=${1:-.}; [ -d "$d" ] || die "no such directory: $d"
+      r=$(cd -P "$d" && find_root) || die "no .sankofa/ in $d or above; run 'sankofa init' there first"
+      if grep -qxF "$r" "$REG"; then echo "sankofa: already watching $r"
+      else printf '%s\n' "$r" >> "$REG"; echo "sankofa: watching $r"; fi ;;
+    list)
+      [ -s "$REG" ] || { echo "no watched repos"; return 0; }
+      while IFS= read -r r; do
+        [ -n "$r" ] || continue
+        if [ -f "$r/.sankofa/ledger.jsonl" ]; then echo "$r"; else echo "$r  (ledger missing)"; fi
+      done < "$REG" ;;
+    rm)
+      d=${1:-.}
+      r=$( (cd -P "$d" 2>/dev/null && find_root) || printf '%s' "${d%/}")
+      grep -qxF "$r" "$REG" || die "not watching $r"
+      tmp=$REG.tmp.$$; grep -vxF "$r" "$REG" > "$tmp" || :; mv "$tmp" "$REG"
+      echo "sankofa: stopped watching $r" ;;
+    *) die "watch add|list|rm" ;;
+  esac
+}
+
 main() {
   cmd=${1:-}; [ $# -gt 0 ] && shift
   case "$cmd" in
@@ -214,6 +244,7 @@ main() {
     last)      cmd_last "$@" ;;
     log)       cmd_log "$@" ;;
     hook)      cmd_hook "$@" ;;
+    watch)     cmd_watch "$@" ;;
     version|-V|--version) echo "sankofa $VERSION" ;;
     ""|help|-h|--help) usage ;;
     *) die "unknown command '$cmd' (try: sankofa help)" ;;

@@ -32,16 +32,19 @@ sankofad ── SQLite, append-only events, leases with expiry
 
 ## Status
 
-Iteration 0.1: shell ledger and Stop hooks. See `docs/ROADMAP.md` for what
-comes next. Each iteration ships with tests and is used for real before the
-next starts.
+Iteration 0.2: shell ledger, Stop hooks, and desktop toasts for items that
+need you. See `docs/ROADMAP.md` for what comes next. Each iteration ships with
+tests, and its usage gate is run as an accelerated simulation (`sim/`) against
+the real code before the next starts.
 
 ## Quick start
 
 ```sh
-./install.sh            # links ~/.local/bin/sankofa, adds Stop + SubagentStop hooks
+./install.sh            # links ~/.local/bin/sankofa{,-watch}, adds Stop + SubagentStop hooks,
+                        # enables the sankofa-watch systemd user service
 cd ~/Work/some-repo
 sankofa init            # creates .sankofa/ (add it to .gitignore or commit it, your call)
+sankofa watch add       # toast this repo's awaiting items on the desktop
 sankofa todo "write the PKGBUILD"
 sankofa awaiting "sudo pacman -U the built package"
 sankofa open
@@ -49,9 +52,27 @@ sankofa note "built and tested; package not yet installed"
 make test               # from this repo: runs tests/*/*.sh
 ```
 
-The Stop hook refuses to end a session that leaves open items without a note.
-Turn that off per repo with `require_note=0` in `.sankofa/config`, or once
-with `SANKOFA_REQUIRE_NOTE=0`.
+The Stop hook refuses to end a turn when the ledger has open items and this
+session changed something it has not written up: an Edit/Write call in the
+transcript, or a different git working tree, since the session's own last
+ledger write. A reply that only answers a question is never blocked. Turn it
+off per repo with `require_note=0` in `.sankofa/config`, or once with
+`SANKOFA_REQUIRE_NOTE=0`.
+
+`sankofa-watch` toasts new `awaiting` entries (urgent) in every watched repo.
+Set `SANKOFA_TOAST_TYPES="awaiting note"` in the service environment to see
+every handoff note too; a simulated week put that at about 40 toasts a day.
+More than five new entries in one scan, such as after a reboot, become one
+summary toast.
+
+## Simulations
+
+```sh
+python3 sim/week.py     # Stop rule: blocks, nags, missed handoffs per simulated week
+python3 sim/notify.py   # notifier: exactly-once delivery, latency, toasts per day
+```
+
+Both drive the real CLI, hook, and watcher with synthetic sessions.
 
 ## Docs
 
