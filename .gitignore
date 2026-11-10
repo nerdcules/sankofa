@@ -1,0 +1,5 @@
+.sankofa/
+bin/obj/
+bin/out/
+*.db
+*.db-journal
