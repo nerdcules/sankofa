@@ -32,8 +32,26 @@ sankofad ── SQLite, append-only events, leases with expiry
 
 ## Status
 
-Iteration 0: design only. See `docs/ROADMAP.md` for the build order.
-Each iteration ships with tests and is used for real before the next starts.
+Iteration 0.1: shell ledger and Stop hooks. See `docs/ROADMAP.md` for what
+comes next. Each iteration ships with tests and is used for real before the
+next starts.
+
+## Quick start
+
+```sh
+./install.sh            # links ~/.local/bin/sankofa, adds Stop + SubagentStop hooks
+cd ~/Work/some-repo
+sankofa init            # creates .sankofa/ (add it to .gitignore or commit it, your call)
+sankofa todo "write the PKGBUILD"
+sankofa awaiting "sudo pacman -U the built package"
+sankofa open
+sankofa note "built and tested; package not yet installed"
+make test               # from this repo: runs tests/*/*.sh
+```
+
+The Stop hook refuses to end a session that leaves open items without a note.
+Turn that off per repo with `require_note=0` in `.sankofa/config`, or once
+with `SANKOFA_REQUIRE_NOTE=0`.
 
 ## Docs
 
