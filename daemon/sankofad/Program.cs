@@ -12,6 +12,7 @@ using Sankofa;
 //                                          4 sent but no answer (the write may or may not have happened)
 //   sankofad gate claude-code|codex        pre-edit hook: JSON payload on stdin, deny JSON on stdout
 //   sankofad gate git-pre-commit           refuse staged paths someone else holds (exit 1)
+//   sankofad mcp                           MCP server on stdio: the CLI's verbs as tools
 //   sankofad bench                         startup and ask round-trip timings, as JSON
 //   sankofad version
 
@@ -27,13 +28,14 @@ switch (cmd)
     case "serve": return Serve(Opt(args, "--socket", Defaults.Socket()), Opt(args, "--db", Defaults.Db()));
     case "send": return Send(Opt(args, "--socket", Defaults.Socket()));
     case "bench": return Bench.Run();
+    case "mcp" or "--mcp": return McpExec.Run(args[1..]);
     case "gate" when args.Length > 1 && args[1] == "git-pre-commit": return Gate.PreCommit();
     case "gate" when args.Length > 1:
         try { return Gate.PreEdit(args[1]); }
         catch (SankofaException ex) { Console.Error.WriteLine($"sankofad gate: {ex.Message}"); return 1; }
     case "version" or "--version" or "-V": Console.WriteLine($"sankofad {Store.Version}"); return 0;
     default:
-        Console.Error.WriteLine("usage: sankofad serve [--socket P] [--db P] | send [--socket P] | gate claude-code|codex|git-pre-commit | bench | version");
+        Console.Error.WriteLine("usage: sankofad serve [--socket P] [--db P] | send [--socket P] | gate claude-code|codex|git-pre-commit | mcp | bench | version");
         return cmd is "help" or "-h" or "--help" ? 0 : 2;
 }
 
@@ -80,6 +82,25 @@ static int Send(string socket)
     if (line is null) { Console.Error.WriteLine("sankofad: daemon closed the connection before answering"); return 4; }
     stdout.Write(Encoding.UTF8.GetBytes(line + "\n"));
     return line.StartsWith("{\"ok\":true", StringComparison.Ordinal) ? 0 : 1;
+}
+
+/// <summary>`sankofad mcp` becomes sankofa-mcp (execv: same process, same stdio, no relay).</summary>
+static partial class McpExec
+{
+    [System.Runtime.InteropServices.LibraryImport("libc", SetLastError = true, StringMarshalling = System.Runtime.InteropServices.StringMarshalling.Utf8)]
+    private static partial int execv(string path, string?[] argv);
+
+    public static int Run(string[] rest)
+    {
+        var self = Environment.ProcessPath is { } p ? new FileInfo(p).ResolveLinkTarget(true)?.FullName ?? p : "";
+        var sibling = Path.Combine(Path.GetDirectoryName(self) ?? ".", "sankofa-mcp");
+        var target = File.Exists(sibling) ? sibling
+                   : (Environment.GetEnvironmentVariable("PATH") ?? "").Split(':').Select(d => Path.Combine(d, "sankofa-mcp")).FirstOrDefault(File.Exists);
+        if (target is null) { Console.Error.WriteLine("sankofad: sankofa-mcp not found next to sankofad or on PATH"); return 1; }
+        execv(target, [target, .. rest, null]);
+        Console.Error.WriteLine($"sankofad: could not run {target} (errno {System.Runtime.InteropServices.Marshal.GetLastPInvokeError()})");
+        return 1;
+    }
 }
 
 static class Bench

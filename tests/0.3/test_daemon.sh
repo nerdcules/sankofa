@@ -5,7 +5,7 @@
 $S init >/dev/null
 assert_contains "$($S daemon 2>&1 || :)" "not answering" "no daemon yet"
 start_daemon
-assert_contains "$($S daemon)" "sankofad 0.4.0" "daemon answers"
+assert_contains "$($S daemon)" "sankofad 0.5.0" "daemon answers"
 
 # ledger verbs go through the daemon and land in the mirror
 SANKOFA_SESSION=s1 $S note "first note"
@@ -64,6 +64,13 @@ assert_eq "$($S events | jq -r 'select(.session=="s4") | .text' | tr '\n' '|')" 
 assert_eq "$($S events | grep -c .)" "$(lines .sankofa/ledger.jsonl)" "daemon and file agree after import"
 assert_eq "$(jq -r .id .sankofa/ledger.jsonl | sort | uniq -d)" "" "no duplicate ids"
 $S done "$fid" "done through the daemon"
+
+# a lease finished while the daemon is down is applied when it is back
+lid=$(SANKOFA_SESSION=s5 $S claim src/late.c | cut -d' ' -f1)
+stop_daemon
+SANKOFA_SESSION=s5 $S done "$lid" "finished offline"
+start_daemon
+assert_eq "$($S ask src/late.c)" "free  src/late.c" "offline done finished the lease, not dirty"
 assert_contains "$($S open)" "log in to the registry" "open still lists the awaiting item"
 
 # someone truncates the file: the daemon puts it back and says so

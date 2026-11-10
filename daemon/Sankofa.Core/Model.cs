@@ -92,6 +92,7 @@ public sealed class Response
 [JsonSerializable(typeof(Response))]
 [JsonSerializable(typeof(Hit))]
 [JsonSerializable(typeof(string))]
+[JsonSerializable(typeof(Dictionary<string, JsonElement>))]
 public partial class Json : JsonSerializerContext
 {
     /// <summary>Like Default, but leaves quotes, apostrophes and non-ASCII text readable.</summary>

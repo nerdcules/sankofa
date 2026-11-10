@@ -2,7 +2,10 @@
 # Installs sankofa into ~/.local/bin, wires the Stop / SubagentStop hooks into
 # ~/.claude/settings.json, and installs the sankofad and sankofa-watch systemd user
 # services. Builds sankofad first if it is missing and the .NET SDK is present; without
-# it the CLI works on the local ledger alone. Idempotent. --uninstall reverses it all.
+# it the CLI works on the local ledger alone. Registers `sankofad mcp` with Claude Code
+# (claude mcp add) and Codex (~/.codex/config.toml) when they are installed.
+# Idempotent. --uninstall reverses it all.
+# Env: SANKOFA_NO_MCP=1 skips the client registrations; CODEX_HOME locates Codex's config.
 # Env: XDG_BIN_HOME, CLAUDE_SETTINGS, XDG_CONFIG_HOME; SANKOFA_NO_SYSTEMD=1 writes the
 # unit but does not call systemctl (tests, containers).
 set -eu
@@ -11,6 +14,39 @@ BIN=${XDG_BIN_HOME:-$HOME/.local/bin}
 SETTINGS=${CLAUDE_SETTINGS:-$HOME/.claude/settings.json}
 UNIT_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user
 UNITS="sankofad.service sankofa-watch.service"
+CODEX_CONFIG=${CODEX_HOME:-$HOME/.codex}/config.toml
+CODEX_MARK="# sankofa MCP server (install.sh)"
+
+mcp_register() {
+  [ "${SANKOFA_NO_MCP:-0}" = 1 ] && return 0
+  if command -v claude >/dev/null; then
+    if claude mcp get sankofa >/dev/null 2>&1; then echo "install: Claude Code already has the sankofa MCP server"
+    else claude mcp add --scope user sankofa -- sankofad mcp >/dev/null && echo "install: registered sankofad mcp with Claude Code (user scope)"; fi
+  fi
+  if [ -f "$CODEX_CONFIG" ]; then
+    if grep -qF "$CODEX_MARK" "$CODEX_CONFIG" || grep -q '^\[mcp_servers\.sankofa\]' "$CODEX_CONFIG"; then
+      echo "install: Codex already has the sankofa MCP server"
+    else
+      cp "$CODEX_CONFIG" "$CODEX_CONFIG.bak-$(date -u +%Y%m%dT%H%M%SZ)"
+      printf '\n%s\n[mcp_servers.sankofa]\ncommand = "sankofad"\nargs = ["mcp"]\n' "$CODEX_MARK" >> "$CODEX_CONFIG"
+      echo "install: registered sankofad mcp with Codex in $CODEX_CONFIG (backup kept beside it)"
+    fi
+  fi
+}
+
+mcp_unregister() {
+  [ "${SANKOFA_NO_MCP:-0}" = 1 ] && return 0
+  command -v claude >/dev/null && claude mcp remove --scope user sankofa >/dev/null 2>&1 || :
+  if [ -f "$CODEX_CONFIG" ] && grep -qF "$CODEX_MARK" "$CODEX_CONFIG"; then
+    cp "$CODEX_CONFIG" "$CODEX_CONFIG.bak-$(date -u +%Y%m%dT%H%M%SZ)"
+    tmp=$(mktemp)
+    awk -v m="$CODEX_MARK" '
+      $0 == m { skip = 1; next }
+      skip && /^\[/ && $0 != "[mcp_servers.sankofa]" { skip = 0 }
+      skip { next }
+      { print }' "$CODEX_CONFIG" | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}' > "$tmp" && mv "$tmp" "$CODEX_CONFIG"
+  fi
+}
 # event | matcher | command  (the Claude Code adapter; see hooks/claude-code/)
 HOOKS='[
   {"ev":"Stop","cmd":"sankofa hook stop"},
@@ -31,8 +67,9 @@ if [ "${1:-}" = --uninstall ]; then
   for u in $UNITS; do
     [ -f "$UNIT_DIR/$u" ] && { sysd disable --now "$u"; rm -f "$UNIT_DIR/$u"; }
   done
+  mcp_unregister
   sysd daemon-reload
-  rm -f "$BIN/sankofa" "$BIN/sankofa-watch" "$BIN/sankofad"
+  rm -f "$BIN/sankofa" "$BIN/sankofa-watch" "$BIN/sankofad" "$BIN/sankofa-mcp"
   backup
   tmp=$(mktemp)
   jq --argjson hs "$HOOKS" '
@@ -73,6 +110,7 @@ mkdir -p "$UNIT_DIR"
 install_unit() { sed "s|@BIN@|$BIN|g" "$HERE/systemd/$1" > "$UNIT_DIR/$1.tmp" && mv "$UNIT_DIR/$1.tmp" "$UNIT_DIR/$1"; }
 if [ -x "$DAEMON" ]; then
   ln -sf "$DAEMON" "$BIN/sankofad"
+  [ -x "$HERE/bin/out/sankofa-mcp" ] && ln -sf "$HERE/bin/out/sankofa-mcp" "$BIN/sankofa-mcp"
   install_unit sankofad.service
   echo "install: $BIN/sankofad -> $DAEMON"
 else
@@ -85,4 +123,5 @@ for u in $UNITS; do
   sysd enable "$u"; sysd restart "$u"
 done
 echo "install: user services installed in $UNIT_DIR"
+mcp_register
 echo "install: in each repo that should keep a ledger: sankofa init; sankofa watch add; sankofa gate install"

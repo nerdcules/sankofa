@@ -77,5 +77,8 @@ while :; do
   scan
   set -- "$CONF"
   while IFS= read -r r; do [ -d "$r/.sankofa" ] && set -- "$@" "$r/.sankofa"; done < "$REG"
-  inotifywait -qq -t "$TIMEOUT" -e modify,create,moved_to,close_write "$@" 2>/dev/null || :
+  # wake only for the ledgers and the registry; other files in .sankofa/ (the lock file) would
+  # wake the scan before the ledger line lands, and the line would wait for the next timeout
+  inotifywait -qq -t "$TIMEOUT" -e modify,create,moved_to,close_write \
+    --include '(/ledger\.jsonl|/watched)$' "$@" 2>/dev/null || :
 done

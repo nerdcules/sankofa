@@ -18,6 +18,9 @@ never edit the ledger by hand.
   ends; an abandoned lease expires, and the next holder is told the edit may be
   half-finished.
 - A commit that touches a path someone else holds is refused by the git gate.
+- Without a shell, the same verbs are MCP tools on the `sankofa` server
+  (`sankofad mcp`): `open`, `last`, `note`, `todo`, `awaiting`, `done`,
+  `claim`, `release`, `ask`, `leases`.
 
 A Stop hook will refuse to let the session end while open items exist and
 this session has written no note. Writing the note is the fix.

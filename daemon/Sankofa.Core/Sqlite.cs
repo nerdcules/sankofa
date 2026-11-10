@@ -36,6 +36,37 @@ internal static partial class Native
 
 public sealed class SqliteException(string message) : Exception(message);
 
+/// <summary>
+/// An exclusive flock(2) on .sankofa/ledger.lock, the lock every ledger writer takes (the CLI
+/// fallback with flock(1), the gate, the daemon) while it picks the next id and appends.
+/// </summary>
+public static partial class LedgerLock
+{
+    // Plain open(2), not FileStream: .NET's own FileShare emulation flocks every file it opens
+    // and would collide with this lock.
+    [LibraryImport("libc", SetLastError = true, StringMarshalling = StringMarshalling.Utf8)]
+    private static partial int open(string path, int flags, int mode);
+    [LibraryImport("libc", SetLastError = true)] private static partial int flock(int fd, int operation);
+    [LibraryImport("libc")] private static partial int close(int fd);
+    const int O_RDWR = 2, O_CREAT = 0x40, O_CLOEXEC = 0x80000, LOCK_EX = 2, EINTR = 4;
+
+    public static IDisposable Acquire(string sankofaDir)
+    {
+        var path = Path.Combine(sankofaDir, "ledger.lock");
+        int fd = open(path, O_RDWR | O_CREAT | O_CLOEXEC, 0b110_100_100);
+        if (fd < 0) throw new IOException($"cannot open {path} (errno {Marshal.GetLastPInvokeError()})");
+        while (flock(fd, LOCK_EX) != 0)
+            if (Marshal.GetLastPInvokeError() != EINTR) { close(fd); throw new IOException($"cannot lock {path}"); }
+        return new Held(fd);
+    }
+
+    sealed class Held(int fd) : IDisposable
+    {
+        int f = fd;
+        public void Dispose() { if (f >= 0) { close(f); f = -1; } }   // closing releases the lock
+    }
+}
+
 /// <summary>One connection, cached prepared statements. Not thread-safe; the Store serialises access.</summary>
 public sealed class Db : IDisposable
 {

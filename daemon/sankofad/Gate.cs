@@ -118,6 +118,7 @@ static class Gate
         try
         {
             var path = Path.Combine(root, ".sankofa", "ledger.jsonl");
+            using var held = LedgerLock.Acquire(Path.Combine(root, ".sankofa"));
             var bytes = File.Exists(path) ? File.ReadAllBytes(path) : [];
             var tail = Encoding.UTF8.GetString(bytes, Math.Max(0, bytes.Length - 65536), Math.Min(bytes.Length, 65536));
             var e = new Entry

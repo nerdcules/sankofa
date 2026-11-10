@@ -15,7 +15,7 @@ public sealed class SankofaException(string message) : Exception(message);
 /// </summary>
 public sealed class Store : IDisposable
 {
-    public const string Version = "0.4.0";
+    public const string Version = "0.5.0";
     public const long DefaultTtlSeconds = 1800;
     static readonly HashSet<string> AppendTypes = ["note", "todo", "awaiting", "stop", "flag"];
     const string Cols = "seq, repo, id, ts, type, session, agent, text, ref, wt, glob, expires, nonce";
@@ -24,6 +24,25 @@ public sealed class Store : IDisposable
     readonly Db db;
     readonly Func<DateTimeOffset> clock;
     readonly Lock gate = new();
+    readonly Dictionary<string, (IDisposable Lock, int Depth)> fileLocks = [];
+
+    /// <summary>Hold the repo's ledger file lock; reentrant within the store (a restore appends a flag).</summary>
+    IDisposable FileLock(string repo)
+    {
+        if (fileLocks.TryGetValue(repo, out var h)) { fileLocks[repo] = (h.Lock, h.Depth + 1); }
+        else fileLocks[repo] = (LedgerLock.Acquire(Path.GetDirectoryName(LedgerPath(repo))!), 1);
+        return new FileLockScope(this, repo);
+    }
+
+    sealed class FileLockScope(Store s, string repo) : IDisposable
+    {
+        public void Dispose()
+        {
+            var (l, d) = s.fileLocks[repo];
+            if (d > 1) s.fileLocks[repo] = (l, d - 1);
+            else { s.fileLocks.Remove(repo); l.Dispose(); }
+        }
+    }
 
     /// <summary>Raised for every new event (written or imported), inside the store lock.</summary>
     public event Action<Entry>? Appended;
@@ -330,6 +349,7 @@ public sealed class Store : IDisposable
 
     long SyncLocked(string repo)
     {
+        using var _ = FileLock(repo);
         var path = LedgerPath(repo);
         if (!File.Exists(path)) File.WriteAllText(path, "");
         long size = new FileInfo(path).Length;
@@ -403,6 +423,7 @@ public sealed class Store : IDisposable
 
     Entry AppendLocked(string repo, Entry e)
     {
+        using var _ = FileLock(repo);
         long count = SyncLocked(repo);
         e.Id = $"e{count + 1}";
         e.Ts = Now();

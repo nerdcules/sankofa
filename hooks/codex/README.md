@@ -20,5 +20,14 @@ timeout = 5
 statusMessage = "sankofa: checking leases"
 ```
 
-Not verified against a live Codex session yet: the payload shape comes from the Codex hooks
+The ledger tools reach Codex as an MCP server; `install.sh` adds this to
+`~/.codex/config.toml`:
+
+```toml
+[mcp_servers.sankofa]
+command = "sankofad"
+args = ["mcp"]
+```
+
+The PreToolUse gate is not verified against a live Codex session yet: the payload shape comes from the Codex hooks
 documentation, and the patch headers from Codex's patch format.
