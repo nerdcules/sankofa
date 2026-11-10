@@ -13,3 +13,6 @@ stop_json() { # session [stop_hook_active] [message]
   jq -nc --arg s "$1" --argjson a "${2:-false}" --arg m "${3:-All done.}" \
     '{session_id:$s, stop_hook_active:$a, last_assistant_message:$m, hook_event_name:"Stop"}'
 }
+run_hook() { # run_hook <kind> <json>  -> sets RC (exit code) and ERR (stderr)
+  set +e; ERR=$(printf '%s' "$2" | "$S" hook "$1" 2>&1 >/dev/null); RC=$?; set -e
+}
