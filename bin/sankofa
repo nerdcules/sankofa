@@ -1,10 +1,12 @@
 #!/bin/sh
 # sankofa - go back and fetch it.
-# Iteration 0.1: an append-only JSONL ledger per repo, plus Stop hooks.
-# POSIX sh + jq. No daemon yet.
+# The CLI. Writes go to sankofad when it answers on its socket; otherwise they are
+# appended to the repo's .sankofa/ledger.jsonl directly (the 0.1 ledger), and the
+# daemon imports them when it is back. Reads use ledger.jsonl, which the daemon mirrors.
+# POSIX sh + jq.
 set -eu
 
-VERSION=0.2.0
+VERSION=0.3.0
 
 usage() {
   cat <<'USAGE'
@@ -14,7 +16,14 @@ usage: sankofa <command> [args]
   note <text>          record what changed or was decided
   todo <text>          record an open item (prints its id)
   awaiting <text>      record an item that needs the human (prints its id)
-  done <id> [text]     resolve a todo or awaiting item
+  done <id> [text]     resolve a todo or awaiting item, or finish a lease
+  claim <glob> [ttl]   lease paths (ttl like 90, 30m, 2h; default 30m); exit 2 if held
+  release <id>         give a lease up without finishing (its dirty mark stays)
+  ask <path>           who holds this path: held / free, plus half-finished edits
+  leases               live leases and ended ones still marked dirty
+  events [--follow] [--since N] [--all]   raw events from sankofad, one JSON per line;
+                       --follow alone streams new events, with --since it replays first
+  daemon               is sankofad answering?
   open                 list unresolved items
   last [n]             show the newest n entries (default 5)
   log                  show the whole ledger
@@ -27,7 +36,8 @@ usage: sankofa <command> [args]
 
 Ledger: <repo>/.sankofa/ledger.jsonl, append-only.
 Config: <repo>/.sankofa/config, lines of key=value. Keys: require_note=0|1
-Env:    SANKOFA_REQUIRE_NOTE overrides require_note; SANKOFA_AGENT names the writer.
+Env:    SANKOFA_REQUIRE_NOTE overrides require_note; SANKOFA_AGENT names the writer;
+        SANKOFA_SOCKET, SANKOFA_DAEMON_BIN locate sankofad; SANKOFA_NO_DAEMON=1 skips it.
 
 The Stop hook blocks (exit 2) only when all of these hold: require_note is on,
 the ledger has open items, and this session changed something it has not yet
@@ -39,8 +49,10 @@ USAGE
 
 die() { printf 'sankofa: %s\n' "$*" >&2; exit 1; }
 
+SELF_DIR=$(dirname "$(readlink -f "$0")")
+
 find_root() {
-  d=$PWD
+  d=$(pwd -P)
   while :; do
     if [ -d "$d/.sankofa" ]; then printf '%s' "$d"; return 0; fi
     [ "$d" = / ] && return 1
@@ -77,22 +89,81 @@ session_id() { printf '%s' "${CLAUDE_CODE_SESSION_ID:-${CLAUDE_SESSION_ID:-${SAN
 agent_name() { printf '%s' "${SANKOFA_AGENT:-main}"; }
 next_id() { printf 'e%s' "$(( $(wc -l < "$LEDGER") + 1 ))"; }
 
+# --- sankofad -------------------------------------------------------------------
+sock_path() {
+  if [ -n "${SANKOFA_SOCKET:-}" ]; then printf '%s' "$SANKOFA_SOCKET"
+  elif [ -n "${XDG_RUNTIME_DIR:-}" ]; then printf '%s' "$XDG_RUNTIME_DIR/sankofa/sankofad.sock"
+  else printf '/tmp/sankofa-%s/sankofad.sock' "$(id -un)"; fi
+}
+daemon_bin() {
+  if [ -n "${SANKOFA_DAEMON_BIN:-}" ]; then printf '%s' "$SANKOFA_DAEMON_BIN"
+  elif [ -x "$SELF_DIR/out/sankofad" ]; then printf '%s' "$SELF_DIR/out/sankofad"
+  else command -v sankofad 2>/dev/null || return 1; fi
+}
+# dsend <json>: print the daemon's one-line answer. 0 ok, 1 refused, 3 no daemon,
+# 4 sent but unanswered (check the ledger for the request's nonce before writing again).
+dsend() {
+  [ "${SANKOFA_NO_DAEMON:-0}" = 1 ] && return 3
+  s=$(sock_path); [ -S "$s" ] || return 3
+  b=$(daemon_bin) || return 3
+  printf '%s' "$1" | "$b" send --socket "$s" 2>/dev/null
+}
+# dcall <json>: like dsend, sets DOUT and DRC instead of failing under set -e
+dcall() { set +e; DOUT=$(dsend "$1"); DRC=$?; set -e; }
+derr() { printf '%s' "$DOUT" | jq -r '.error // "sankofad refused the request"'; }
+new_nonce() { printf '%s-%s' "$(date +%s%N)" "$$"; }
+# id of the ledger line carrying this nonce, if the daemon wrote it before going away
+nonce_id() { jq -r --arg n "$1" 'select(.nonce == $n) | .id' "$LEDGER" 2>/dev/null | tail -n1; }
+# repo-relative form of a path given relative to the current directory
+repo_rel() {
+  case $1 in
+    /*) p=${1#"$ROOT"}; p=${p#/} ;;
+    *) here=$(pwd -P); sub=${here#"$ROOT"}; sub=${sub#/}; p=${sub:+$sub/}$1 ;;
+  esac
+  printf '%s' "${p:-.}"
+}
+ttl_secs() {
+  case $1 in
+    *[!0-9smhd]*|"") die "bad ttl '$1' (use 90, 30m, 2h, 1d)" ;;
+    *d) echo $(( ${1%d} * 86400 )) ;; *h) echo $(( ${1%h} * 3600 )) ;;
+    *m) echo $(( ${1%m} * 60 )) ;; *s) echo "${1%s}" ;; *) echo "$1" ;;
+  esac
+}
+
 cfg() { # cfg key default
   v=""
   [ -f "$CONFIG" ] && v=$(grep -E "^$1=" "$CONFIG" 2>/dev/null | tail -n1 | cut -d= -f2-)
   printf '%s' "${v:-$2}"
 }
 
-# append type text [ref] [session] [agent]
+# append type text [ref] [session] [agent]: through sankofad if it answers, else locally
 append() {
+  wt=$(wt_fp); nonce=$(new_nonce)
+  req=$(jq -nc --arg repo "$ROOT" --arg type "$1" --arg text "$2" --arg ref "${3:-}" \
+    --arg session "${4:-$(session_id)}" --arg agent "${5:-$(agent_name)}" --arg wt "$wt" --arg nonce "$nonce" \
+    '{verb:"append",repo:$repo,type:$type,text:$text,session:$session,agent:$agent,nonce:$nonce}
+     + (if $ref != "" then {ref:$ref} else {} end) + (if $wt != "-" then {wt:$wt} else {} end)')
+  dcall "$req"
+  case $DRC in
+    0) printf '%s' "$DOUT" | jq -r .id; return 0 ;;
+    4) got=$(nonce_id "$nonce"); if [ -n "$got" ]; then printf '%s\n' "$got"; return 0; fi
+       local_append "$1" "$2" "${3:-}" "${4:-}" "${5:-}" "$wt" "$nonce" ;;
+    3) local_append "$1" "$2" "${3:-}" "${4:-}" "${5:-}" "$wt" "$nonce" ;;
+    *) die "$(derr)" ;;
+  esac
+}
+
+# local_append type text [ref] [session] [agent] [wt] [nonce]: the 0.1 path, no daemon
+local_append() {
   id=$(next_id)
   jq -nc \
     --arg ts "$(now)" --arg id "$id" --arg type "$1" --arg text "$2" \
     --arg ref "${3:-}" --arg session "${4:-$(session_id)}" --arg agent "${5:-$(agent_name)}" \
-    --arg wt "$(wt_fp)" \
+    --arg wt "${6:-$(wt_fp)}" --arg nonce "${7:-}" \
     '{ts:$ts,id:$id,type:$type,session:$session,agent:$agent,text:$text}
      + (if $ref != "" then {ref:$ref} else {} end)
-     + (if $wt != "-" then {wt:$wt} else {} end)' >> "$LEDGER"
+     + (if $wt != "-" then {wt:$wt} else {} end)
+     + (if $nonce != "" then {nonce:$nonce} else {} end)' >> "$LEDGER"
   printf '%s\n' "$id"
 }
 
@@ -124,9 +195,19 @@ cmd_done() {
   [ $# -ge 1 ] || die "done needs an id"
   need_root
   id=$1; shift
+  nonce=$(new_nonce)
+  dcall "$(jq -nc --arg repo "$ROOT" --arg ref "$id" --arg text "${*:-resolved}" --arg session "$(session_id)" \
+            --arg agent "$(agent_name)" --arg nonce "$nonce" \
+            '{verb:"done",repo:$repo,ref:$ref,text:$text,session:$session,agent:$agent,nonce:$nonce}')"
+  case $DRC in
+    0) return 0 ;;
+    4) [ -n "$(nonce_id "$nonce")" ] && return 0 ;;
+    3) ;;
+    *) die "$(derr)" ;;
+  esac
   item_exists "$id" || die "no open item with id $id"
   if open_items | cut -f1 | grep -qx "$id"; then
-    append done "${*:-resolved}" "$id" >/dev/null
+    local_append done "${*:-resolved}" "$id" "" "" "" "$nonce" >/dev/null
   else
     die "$id is already resolved"
   fi
@@ -137,6 +218,89 @@ cmd_open() {
   out=$(open_items)
   if [ -z "$out" ]; then echo "no open items"; return 0; fi
   printf '%s\n' "$out" | awk -F'\t' '{ printf "%-5s %-9s %s  %s\n", $1, $2, $3, $4 }'
+}
+
+fmt_lease() { jq -r '"\(.id)\t\(.state)\(if .dirty then ",dirty" else "" end)\t\(.glob)\t\(.session) [\(.agent)]\tuntil \(.expires)"'; }
+
+cmd_claim() {
+  [ $# -ge 1 ] || die "claim needs a glob"
+  need_root
+  g=$(repo_rel "$1"); ttl=$(ttl_secs "${2:-30m}")
+  dcall "$(jq -nc --arg repo "$ROOT" --arg glob "$g" --argjson ttl "$ttl" --arg session "$(session_id)" \
+            --arg agent "$(agent_name)" --arg wt "$(wt_fp)" \
+            '{verb:"claim",repo:$repo,glob:$glob,ttl:$ttl,session:$session,agent:$agent}
+             + (if $wt != "-" then {wt:$wt} else {} end)')"
+  case $DRC in
+    3) local_append flag "claim on $g not recorded: sankofad unreachable" >/dev/null
+       printf 'sankofa: sankofad unreachable; claim on %s not recorded (flagged in the ledger)\n' "$g" >&2
+       return 0 ;;
+    0) ;;
+    *) die "$(derr)" ;;
+  esac
+  if [ "$(printf '%s' "$DOUT" | jq -r .granted)" = true ]; then
+    verb=held; [ "$(printf '%s' "$DOUT" | jq -r .renewed)" = true ] && verb=renewed
+    printf '%s' "$DOUT" | jq -r --arg v "$verb" '.lease | "\(.id)  \($v)  \(.glob)  until \(.expires)"'
+    printf '%s' "$DOUT" | jq -r '.warnings[]? | "warning: \(.id) on \(.glob) by \(.session) [\(.agent)] ended \(.state) without done; its last edit is unconfirmed"' >&2
+  else
+    printf 'denied: %s overlaps\n' "$g" >&2
+    printf '%s' "$DOUT" | jq -r '.conflicts[] | "  \(.id)  \(.glob)  held by \(.session) [\(.agent)] until \(.expires)"' >&2
+    exit 2
+  fi
+}
+
+cmd_release() {
+  [ $# -ge 1 ] || die "release needs a lease id"
+  need_root
+  dcall "$(jq -nc --arg repo "$ROOT" --arg ref "$1" --arg session "$(session_id)" --arg agent "$(agent_name)" \
+            '{verb:"release",repo:$repo,ref:$ref,session:$session,agent:$agent}')"
+  case $DRC in 0) ;; 3) die "sankofad unreachable; leases live in the daemon" ;; *) die "$(derr)" ;; esac
+}
+
+cmd_ask() {
+  [ $# -ge 1 ] || die "ask needs a path"
+  need_root
+  p=$(repo_rel "$1")
+  dcall "$(jq -nc --arg repo "$ROOT" --arg path "$p" '{verb:"ask",repo:$repo,path:$path}')"
+  case $DRC in 0) ;; 3) echo "unknown  $p  (sankofad unreachable)"; return 0 ;; *) die "$(derr)" ;; esac
+  printf '%s' "$DOUT" | jq -r --arg p "$p" '
+    if .state == "held" then "held  \($p)  \(.lease.id) \(.lease.glob) by \(.lease.session) [\(.lease.agent)] until \(.lease.expires)"
+    else "free  \($p)" end,
+    (.warnings[]? | "dirty  \(.id) \(.glob) by \(.session) [\(.agent)] ended \(.state) without done")'
+}
+
+cmd_leases() {
+  need_root
+  dcall "$(jq -nc --arg repo "$ROOT" '{verb:"leases",repo:$repo}')"
+  case $DRC in 0) ;; 3) die "sankofad unreachable; leases live in the daemon" ;; *) die "$(derr)" ;; esac
+  out=$(printf '%s' "$DOUT" | jq -c '.leases[]?' | fmt_lease)
+  if [ -z "$out" ]; then echo "no leases"; else printf '%s\n' "$out" | awk -F'\t' '{ printf "%-5s %-14s %-24s %-28s %s\n", $1, $2, $3, $4, $5 }'; fi
+}
+
+cmd_events() {
+  follow=false; since=null; all=false
+  while [ $# -gt 0 ]; do
+    case $1 in --follow|-f) follow=true ;; --since) since=$2; shift ;; --all) all=true ;; *) die "events [--follow] [--since N] [--all]" ;; esac
+    shift
+  done
+  if [ "$all" = true ]; then repo=null; else need_root; repo=$(jq -n --arg r "$ROOT" '$r'); fi
+  req=$(jq -nc --argjson repo "$repo" --argjson since "$since" --argjson follow "$follow" \
+        '{verb:"events",follow:$follow} + (if $since != null then {since:$since} else {} end)
+         + (if $repo then {repo:$repo} else {} end)')
+  if [ "$follow" = true ]; then
+    s=$(sock_path); b=$(daemon_bin) || die "sankofad not found"
+    [ -S "$s" ] || die "sankofad unreachable at $s"
+    set +e; printf '%s' "$req" | "$b" send --socket "$s"; rc=$?; set -e
+    exit "$rc"
+  fi
+  dcall "$req"
+  case $DRC in 0) ;; 3) die "sankofad unreachable at $(sock_path)" ;; *) die "$(derr)" ;; esac
+  printf '%s' "$DOUT" | jq -c '.entries[]'
+}
+
+cmd_daemon() {
+  dcall '{"verb":"ping"}'
+  if [ "$DRC" = 0 ]; then printf 'sankofad %s on %s\n' "$(printf '%s' "$DOUT" | jq -r .version)" "$(sock_path)"
+  else printf 'sankofad not answering on %s; writes go to the local ledger\n' "$(sock_path)"; return 1; fi
 }
 
 cmd_last() { need_root; tail -n "${1:-5}" "$LEDGER" | render; }
@@ -153,7 +317,7 @@ cmd_hook() {
   session=$(printf '%s' "$input" | jq -r '.session_id // "-"')
   transcript=$(printf '%s' "$input" | jq -r '.transcript_path // ""')
   active=$(printf '%s' "$input" | jq -r '.stop_hook_active // false')
-  msg=$(printf '%s' "$input" | jq -r '.last_assistant_message // ""' | tr '\n\t' '  ' | cut -c1-400)
+  msg=$(printf '%s' "$input" | jq -r '.last_assistant_message // "" | gsub("[\n\t]+"; " ") | sub(" +$"; "") | .[0:400]')
   if [ "$kind" = subagent-stop ]; then
     agent="subagent:$(printf '%s' "$input" | jq -r '.agent_name // .agent_type // .agent_id // "unnamed"')"
   else
@@ -244,6 +408,12 @@ main() {
     last)      cmd_last "$@" ;;
     log)       cmd_log "$@" ;;
     hook)      cmd_hook "$@" ;;
+    claim)     cmd_claim "$@" ;;
+    release)   cmd_release "$@" ;;
+    ask)       cmd_ask "$@" ;;
+    leases)    cmd_leases "$@" ;;
+    events)    cmd_events "$@" ;;
+    daemon)    cmd_daemon "$@" ;;
     watch)     cmd_watch "$@" ;;
     version|-V|--version) echo "sankofa $VERSION" ;;
     ""|help|-h|--help) usage ;;

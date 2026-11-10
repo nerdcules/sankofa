@@ -7,7 +7,7 @@ export SANKOFA_WATCH_TIMEOUT=3 SANKOFA_TOAST_TYPES="awaiting note"
 wait_for() { # n seconds
   i=0; while [ "$(toasts)" -lt "$1" ] && [ $i -lt $(($2 * 10)) ]; do sleep 0.1; i=$((i + 1)); done
 }
-$W & PID=$!; trap 'kill $PID 2>/dev/null; rm -rf "$T"' EXIT
+$W & PID=$!
 i=0; while ! grep -q alpha "$XDG_STATE_HOME/sankofa/offsets" 2>/dev/null && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
 sleep 0.3
 (cd alpha && $S awaiting "approve the merge" >/dev/null)

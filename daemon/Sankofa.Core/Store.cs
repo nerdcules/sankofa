@@ -1,0 +1,428 @@
+using System.Globalization;
+using System.Text;
+using System.Text.Json;
+
+namespace Sankofa;
+
+public sealed class SankofaException(string message) : Exception(message);
+
+/// <summary>
+/// The ledger and leases for every repo, in one SQLite file. Every write is an appended
+/// event, mirrored as a line to the repo's .sankofa/ledger.jsonl (the 0.1 format), so the
+/// Stop hook, the watcher and the no-daemon fallback keep working. Lines written by the
+/// fallback while the daemon was down are imported on the next touch of that repo.
+/// The store records and answers; it never decides for an agent.
+/// </summary>
+public sealed class Store : IDisposable
+{
+    public const string Version = "0.3.0";
+    public const long DefaultTtlSeconds = 1800;
+    static readonly HashSet<string> AppendTypes = ["note", "todo", "awaiting", "stop", "flag"];
+    const string Cols = "seq, repo, id, ts, type, session, agent, text, ref, wt, glob, expires, nonce";
+    const string LeaseCols = "id, glob, session, agent, claimed, expires, dirty, state";
+
+    readonly Db db;
+    readonly Func<DateTimeOffset> clock;
+    readonly Lock gate = new();
+
+    /// <summary>Raised for every new event (written or imported), inside the store lock.</summary>
+    public event Action<Entry>? Appended;
+
+    public Store(string path, Func<DateTimeOffset>? clock = null)
+    {
+        this.clock = clock ?? (() => DateTimeOffset.UtcNow);
+        var dir = Path.GetDirectoryName(Path.GetFullPath(path));
+        if (dir is not null) Directory.CreateDirectory(dir);
+        db = new Db(path);
+        db.Exec("""
+            PRAGMA journal_mode=WAL;
+            PRAGMA synchronous=FULL;
+            CREATE TABLE IF NOT EXISTS events(
+              seq INTEGER PRIMARY KEY AUTOINCREMENT,
+              repo TEXT NOT NULL, id TEXT NOT NULL, ts TEXT NOT NULL, type TEXT NOT NULL,
+              session TEXT NOT NULL, agent TEXT NOT NULL, text TEXT NOT NULL,
+              ref TEXT, wt TEXT, glob TEXT, expires TEXT, nonce TEXT, source TEXT NOT NULL,
+              UNIQUE(repo, id));
+            CREATE INDEX IF NOT EXISTS events_ref ON events(repo, ref);
+            CREATE TRIGGER IF NOT EXISTS events_no_update BEFORE UPDATE ON events
+              BEGIN SELECT RAISE(ABORT, 'events are append-only'); END;
+            CREATE TRIGGER IF NOT EXISTS events_no_delete BEFORE DELETE ON events
+              BEGIN SELECT RAISE(ABORT, 'events are append-only'); END;
+            CREATE TABLE IF NOT EXISTS leases(
+              repo TEXT NOT NULL, id TEXT NOT NULL, glob TEXT NOT NULL,
+              session TEXT NOT NULL, agent TEXT NOT NULL, claimed TEXT NOT NULL,
+              expires TEXT NOT NULL, dirty INTEGER NOT NULL, state TEXT NOT NULL,
+              PRIMARY KEY(repo, id));
+            CREATE TABLE IF NOT EXISTS repos(repo TEXT PRIMARY KEY, size INTEGER NOT NULL, count INTEGER NOT NULL);
+            """);
+    }
+
+    public void Dispose() { lock (gate) db.Dispose(); }
+
+    public static string Ts(DateTimeOffset t) =>
+        t.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture);
+    string Now() => Ts(clock());
+
+    public static string RepoKey(string repo) => Path.GetFullPath(repo).TrimEnd('/') is { Length: > 0 } r ? r : "/";
+
+    // ---------------------------------------------------------------- verbs
+
+    public Entry Append(string repo, string type, string text, string? session, string? agent,
+                        string? reference = null, string? wt = null, string? nonce = null)
+    {
+        if (!AppendTypes.Contains(type)) throw new SankofaException($"cannot append type '{type}'");
+        if (type != "stop" && string.IsNullOrWhiteSpace(text)) throw new SankofaException($"{type} needs text");
+        lock (gate)
+        {
+            repo = RepoKey(repo);
+            ExpireDue(repo);
+            return AppendLocked(repo, new Entry
+            {
+                Type = type, Text = text, Session = session ?? "-", Agent = agent ?? "main", Ref = reference, Wt = wt,
+                Nonce = nonce,
+            });
+        }
+    }
+
+    /// <summary>Resolve a todo or awaiting item, or finish a lease (clears its dirty mark).</summary>
+    public Entry Done(string repo, string id, string? text, string? session, string? agent, string? wt = null, string? nonce = null)
+    {
+        lock (gate)
+        {
+            repo = RepoKey(repo);
+            SyncLocked(repo); ExpireDue(repo);
+            var e = Get(repo, id) ?? throw new SankofaException($"no open item with id {id}");
+            switch (e.Type)
+            {
+                case "todo" or "awaiting":
+                    if (db.Scalar("SELECT 1 FROM events WHERE repo=? AND type='done' AND ref=?", repo, id) is not null)
+                        throw new SankofaException($"{id} is already resolved");
+                    break;
+                case "claim":
+                    if (GetLease(repo, id)?.State == "done") throw new SankofaException($"{id} is already resolved");
+                    break;
+                default:
+                    throw new SankofaException($"no open item with id {id}");
+            }
+            return AppendLocked(repo, new Entry
+            {
+                Type = "done", Text = string.IsNullOrWhiteSpace(text) ? "resolved" : text!, Ref = id,
+                Session = session ?? "-", Agent = agent ?? "main", Wt = wt, Nonce = nonce,
+            });
+        }
+    }
+
+    public sealed record ClaimResult(bool Granted, bool Renewed, Entry Event, Lease? Lease, List<Lease> Conflicts, List<Lease> Warnings);
+
+    /// <summary>
+    /// Ask for a lease on a glob. Granted unless another holder has a live lease that overlaps.
+    /// The same holder claiming the same glob renews it. Either way the answer is recorded.
+    /// </summary>
+    public ClaimResult Claim(string repo, string glob, string? session, string? agent, long? ttlSeconds = null, string? wt = null)
+    {
+        session ??= "-"; agent ??= "main";
+        glob = Glob.Normalize(glob);
+        var ttl = ttlSeconds is > 0 ? ttlSeconds.Value : DefaultTtlSeconds;
+        lock (gate)
+        {
+            repo = RepoKey(repo);
+            SyncLocked(repo); ExpireDue(repo);
+            var held = Leases(repo, "state='held'");
+            var expires = Ts(clock().AddSeconds(ttl));
+            var mine = held.FirstOrDefault(l => l.Session == session && l.Agent == agent && l.Glob == glob);
+            if (mine is not null)
+            {
+                var ev = AppendLocked(repo, new Entry
+                {
+                    Type = "renew", Text = $"renew {glob}", Ref = mine.Id, Glob = glob, Expires = expires,
+                    Session = session, Agent = agent, Wt = wt,
+                });
+                return new(true, true, ev, GetLease(repo, mine.Id), [], []);
+            }
+            var conflicts = held.Where(l => (l.Session != session || l.Agent != agent) && Glob.Overlap(l.Glob, glob)).ToList();
+            if (conflicts.Count > 0)
+            {
+                var ev = AppendLocked(repo, new Entry
+                {
+                    Type = "contend", Glob = glob, Session = session, Agent = agent, Wt = wt,
+                    Text = $"claim on {glob} overlaps " + string.Join("; ", conflicts.Select(c =>
+                        $"{c.Id} {c.Glob} held by {c.Session} [{c.Agent}] until {c.Expires}")),
+                });
+                return new(false, false, ev, null, conflicts, []);
+            }
+            var warnings = Leases(repo, "state IN ('released','expired') AND dirty=1")
+                .Where(l => Glob.Overlap(l.Glob, glob)).ToList();
+            var claim = AppendLocked(repo, new Entry
+            {
+                Type = "claim", Text = $"claim {glob}", Glob = glob, Expires = expires,
+                Session = session, Agent = agent, Wt = wt,
+            });
+            return new(true, false, claim, GetLease(repo, claim.Id), [], warnings);
+        }
+    }
+
+    /// <summary>Give up a lease without saying the work is finished: the dirty mark stays.</summary>
+    public Entry Release(string repo, string id, string? session, string? agent)
+    {
+        lock (gate)
+        {
+            repo = RepoKey(repo);
+            SyncLocked(repo); ExpireDue(repo);
+            var l = GetLease(repo, id) ?? throw new SankofaException($"no lease with id {id}");
+            if (l.State is "released" or "done") throw new SankofaException($"{id} is already {l.State}");
+            return AppendLocked(repo, new Entry
+            {
+                Type = "release", Text = $"release {l.Glob}", Ref = id, Glob = l.Glob,
+                Session = session ?? "-", Agent = agent ?? "main",
+            });
+        }
+    }
+
+    public sealed record AskResult(string State, Lease? Lease, List<Lease> Holders, List<Lease> Dirty);
+
+    /// <summary>Who holds this path? "held" with the lease, or "free"; dirty leases that cover it are listed.</summary>
+    public AskResult Ask(string repo, string path)
+    {
+        path = Glob.Normalize(path);
+        lock (gate)
+        {
+            repo = RepoKey(repo);
+            SyncLocked(repo); ExpireDue(repo);
+            var cover = Leases(repo, "state IN ('held','released','expired')")
+                .Where(l => Glob.Overlap(l.Glob, path)).ToList();
+            var holders = cover.Where(l => l.State == "held").ToList();
+            var dirty = cover.Where(l => l.State != "held" && l.Dirty).ToList();
+            return holders.Count > 0
+                ? new("held", holders[0], holders, dirty)
+                : new("free", null, [], dirty);
+        }
+    }
+
+    /// <summary>Live leases plus ended leases still marked dirty.</summary>
+    public List<Lease> Leases(string repo)
+    {
+        lock (gate)
+        {
+            repo = RepoKey(repo);
+            SyncLocked(repo); ExpireDue(repo);
+            return Leases(repo, "state='held' OR (dirty=1 AND state IN ('released','expired'))");
+        }
+    }
+
+    public List<Entry> Open(string repo)
+    {
+        lock (gate)
+        {
+            repo = RepoKey(repo);
+            SyncLocked(repo);
+            return Rows($"""
+                SELECT {Cols} FROM events e WHERE repo=? AND type IN ('todo','awaiting')
+                AND NOT EXISTS (SELECT 1 FROM events d WHERE d.repo=e.repo AND d.type='done' AND d.ref=e.id)
+                ORDER BY seq
+                """, repo);
+        }
+    }
+
+    public List<Entry> Last(string repo, int n)
+    {
+        lock (gate)
+        {
+            repo = RepoKey(repo);
+            SyncLocked(repo);
+            var rows = Rows($"SELECT {Cols} FROM events WHERE repo=? ORDER BY seq DESC LIMIT ?", repo, (long)n);
+            rows.Reverse();
+            return rows;
+        }
+    }
+
+    /// <summary>Events after a daemon-wide sequence number, optionally for one repo.</summary>
+    public List<Entry> EventsSince(long since, string? repo = null, int limit = 10000)
+    {
+        lock (gate)
+        {
+            if (repo is null) return Rows($"SELECT {Cols} FROM events WHERE seq>? ORDER BY seq LIMIT ?", since, (long)limit);
+            repo = RepoKey(repo);
+            SyncLocked(repo);
+            return Rows($"SELECT {Cols} FROM events WHERE seq>? AND repo=? ORDER BY seq LIMIT ?", since, repo, (long)limit);
+        }
+    }
+
+    /// <summary>Bring the database up to date with the repo's JSONL file; returns the entry count.</summary>
+    public long Sync(string repo)
+    {
+        lock (gate) return SyncLocked(RepoKey(repo));
+    }
+
+    // ---------------------------------------------------------------- internals
+
+    static string LedgerPath(string repo)
+    {
+        var dir = Path.Combine(repo, ".sankofa");
+        if (!Directory.Exists(dir)) throw new SankofaException($"no .sankofa/ in {repo}; run 'sankofa init' there");
+        return Path.Combine(dir, "ledger.jsonl");
+    }
+
+    long SyncLocked(string repo)
+    {
+        var path = LedgerPath(repo);
+        if (!File.Exists(path)) File.WriteAllText(path, "");
+        long size = new FileInfo(path).Length;
+        var st = db.Query("SELECT size, count FROM repos WHERE repo=?", repo);
+        long knownSize = st.Count > 0 ? (long)st[0][0]! : -1, count = st.Count > 0 ? (long)st[0][1]! : 0;
+        if (size == knownSize) return count;
+
+        var (lines, complete) = ReadLines(path);
+        if (lines.Count > count)
+        {
+            var imported = new List<Entry>();
+            db.Exec("BEGIN IMMEDIATE");
+            try
+            {
+                for (int i = (int)count; i < lines.Count; i++)
+                {
+                    Entry e;
+                    try { e = JsonSerializer.Deserialize(lines[i], Json.Wire.Entry) ?? throw new JsonException(); }
+                    catch (JsonException)
+                    {
+                        e = new Entry { Ts = Now(), Type = "flag", Session = "sankofad", Agent = "sankofad",
+                                        Text = $"ledger line {i + 1} was not JSON; kept as text: {lines[i]}" };
+                    }
+                    if (string.IsNullOrEmpty(e.Id) || Get(repo, e.Id) is not null) e.Id = $"e{i + 1}";
+                    if (Get(repo, e.Id) is not null) e.Id = $"e{i + 1}-dup";
+                    if (string.IsNullOrEmpty(e.Ts)) e.Ts = Now();
+                    e.Repo = repo;
+                    e.Seq = Insert(repo, e, "import");
+                    Apply(repo, e);
+                    imported.Add(e);
+                }
+                SetRepo(repo, complete ? size : -1, lines.Count);
+                db.Exec("COMMIT");
+            }
+            catch { db.Exec("ROLLBACK"); throw; }
+            foreach (var e in imported) Appended?.Invoke(e);
+            return lines.Count;
+        }
+        if (lines.Count < count)
+        {
+            // The file lost entries the database has: write them all back, then say so.
+            var all = Rows($"SELECT {Cols} FROM events WHERE repo=? ORDER BY seq", repo);
+            var tmp = path + ".restore." + Environment.ProcessId;
+            File.WriteAllText(tmp, string.Concat(all.Select(e => Json.Line(e) + "\n")));
+            File.Move(tmp, path, overwrite: true);
+            SetRepo(repo, new FileInfo(path).Length, count);
+            AppendLocked(repo, new Entry
+            {
+                Type = "flag", Session = "sankofad", Agent = "sankofad",
+                Text = $"ledger file had {lines.Count} of {count} entries; restored the rest from sankofad",
+            });
+            return count + 1;
+        }
+        SetRepo(repo, complete ? size : -1, count);
+        return count;
+    }
+
+    static (List<string> lines, bool complete) ReadLines(string path)
+    {
+        string text;
+        using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+        using (var r = new StreamReader(fs, Encoding.UTF8)) text = r.ReadToEnd();
+        var parts = text.Split('\n');
+        bool complete = parts[^1].Length == 0;   // a half-written last line is left for the next sync
+        return (parts[..^1].Where(l => !string.IsNullOrWhiteSpace(l)).ToList(), complete);
+    }
+
+    void SetRepo(string repo, long size, long count) =>
+        db.Run("INSERT INTO repos(repo,size,count) VALUES(?,?,?) ON CONFLICT(repo) DO UPDATE SET size=excluded.size, count=excluded.count",
+               repo, size, count);
+
+    Entry AppendLocked(string repo, Entry e)
+    {
+        long count = SyncLocked(repo);
+        e.Id = $"e{count + 1}";
+        e.Ts = Now();
+        e.Repo = repo;
+        var path = LedgerPath(repo);
+        db.Exec("BEGIN IMMEDIATE");
+        try
+        {
+            e.Seq = Insert(repo, e, "daemon");
+            Apply(repo, e);
+            using (var f = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
+            {
+                f.Write(Encoding.UTF8.GetBytes(Json.Line(e) + "\n"));
+                f.Flush(flushToDisk: true);
+            }
+            SetRepo(repo, new FileInfo(path).Length, count + 1);
+            db.Exec("COMMIT");
+        }
+        catch { db.Exec("ROLLBACK"); throw; }   // a line that reached the file but not the db is imported next time
+        Appended?.Invoke(e);
+        return e;
+    }
+
+    long Insert(string repo, Entry e, string source) =>
+        (long)db.Query("""
+            INSERT INTO events(repo,id,ts,type,session,agent,text,ref,wt,glob,expires,nonce,source)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING seq
+            """, repo, e.Id, e.Ts, e.Type, e.Session, e.Agent, e.Text, e.Ref, e.Wt, e.Glob, e.Expires, e.Nonce, source)[0][0]!;
+
+    /// <summary>Lease state follows from events; imported events go through here too.</summary>
+    void Apply(string repo, Entry e)
+    {
+        switch (e.Type)
+        {
+            case "claim" when e.Glob is not null && e.Expires is not null:
+                db.Run("INSERT OR REPLACE INTO leases(repo,id,glob,session,agent,claimed,expires,dirty,state) VALUES(?,?,?,?,?,?,?,1,'held')",
+                       repo, e.Id, e.Glob, e.Session, e.Agent, e.Ts, e.Expires);
+                break;
+            case "renew" when e.Ref is not null && e.Expires is not null:
+                db.Run("UPDATE leases SET expires=? WHERE repo=? AND id=? AND state='held'", e.Expires, repo, e.Ref);
+                break;
+            case "release" when e.Ref is not null:
+                db.Run("UPDATE leases SET state='released' WHERE repo=? AND id=? AND state IN ('held','expired')", repo, e.Ref);
+                break;
+            case "expire" when e.Ref is not null:
+                db.Run("UPDATE leases SET state='expired' WHERE repo=? AND id=? AND state='held'", repo, e.Ref);
+                break;
+            case "done" when e.Ref is not null && GetLease(repo, e.Ref) is { } l:
+                db.Run("UPDATE leases SET state='done', dirty=0 WHERE repo=? AND id=?", repo, e.Ref);
+                // finishing work on these paths also settles older half-edits under them
+                foreach (var old in Leases(repo, "dirty=1 AND state IN ('released','expired')").Where(o => Glob.Overlap(o.Glob, l.Glob)))
+                    db.Run("UPDATE leases SET dirty=0 WHERE repo=? AND id=?", repo, old.Id);
+                break;
+        }
+    }
+
+    void ExpireDue(string repo)
+    {
+        var due = Leases(repo, "state='held' AND expires <= ?", Now());
+        foreach (var l in due)
+            AppendLocked(repo, new Entry
+            {
+                Type = "expire", Ref = l.Id, Glob = l.Glob, Session = "sankofad", Agent = "sankofad",
+                Text = $"lease {l.Id} on {l.Glob} held by {l.Session} [{l.Agent}] expired at {l.Expires}" +
+                       (l.Dirty ? "; its paths may hold a half-finished edit" : ""),
+            });
+    }
+
+    Entry? Get(string repo, string id) =>
+        Rows($"SELECT {Cols} FROM events WHERE repo=? AND id=?", repo, id).FirstOrDefault();
+
+    Lease? GetLease(string repo, string id) => Leases(repo, "id=?", id).FirstOrDefault();
+
+    List<Lease> Leases(string repo, string where, params object?[] args) =>
+        db.Query($"SELECT {LeaseCols} FROM leases WHERE repo=? AND ({where}) ORDER BY claimed", [repo, .. args])
+          .Select(r => new Lease
+          {
+              Id = (string)r[0]!, Glob = (string)r[1]!, Session = (string)r[2]!, Agent = (string)r[3]!,
+              Claimed = (string)r[4]!, Expires = (string)r[5]!, Dirty = (long)r[6]! != 0, State = (string)r[7]!,
+          }).ToList();
+
+    List<Entry> Rows(string sql, params object?[] args) =>
+        db.Query(sql, args).Select(r => new Entry
+        {
+            Seq = (long)r[0]!, Repo = (string)r[1]!, Id = (string)r[2]!, Ts = (string)r[3]!, Type = (string)r[4]!,
+            Session = (string)r[5]!, Agent = (string)r[6]!, Text = (string)r[7]!, Ref = (string?)r[8],
+            Wt = (string?)r[9], Glob = (string?)r[10], Expires = (string?)r[11], Nonce = (string?)r[12],
+        }).ToList();
+}
