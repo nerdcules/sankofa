@@ -54,6 +54,15 @@ public sealed class Request
     [JsonPropertyName("since")] public long? Since { get; set; }
     [JsonPropertyName("follow")] public bool Follow { get; set; }
     [JsonPropertyName("nonce")] public string? Nonce { get; set; }
+    [JsonPropertyName("paths")] public List<string>? Paths { get; set; }
+    [JsonPropertyName("inherit")] public bool Inherit { get; set; }
+    [JsonPropertyName("idle")] public long? Idle { get; set; }
+}
+
+public sealed class Hit
+{
+    [JsonPropertyName("path")] public string Path { get; set; } = "";
+    [JsonPropertyName("lease")] public Lease Lease { get; set; } = new();
 }
 
 public sealed class Response
@@ -71,6 +80,7 @@ public sealed class Response
     [JsonPropertyName("entries")] public List<Entry>? Entries { get; set; }
     [JsonPropertyName("entry")] public Entry? Entry { get; set; }
     [JsonPropertyName("version")] public string? Version { get; set; }
+    [JsonPropertyName("hits")] public List<Hit>? Hits { get; set; }
 
     public static Response Fail(string error) => new() { Ok = false, Error = error };
 }
@@ -80,6 +90,8 @@ public sealed class Response
 [JsonSerializable(typeof(Lease))]
 [JsonSerializable(typeof(Request))]
 [JsonSerializable(typeof(Response))]
+[JsonSerializable(typeof(Hit))]
+[JsonSerializable(typeof(string))]
 public partial class Json : JsonSerializerContext
 {
     /// <summary>Like Default, but leaves quotes, apostrophes and non-ASCII text readable.</summary>

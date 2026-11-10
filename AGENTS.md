@@ -8,11 +8,16 @@ never edit the ledger by hand.
 - When you leave something unfinished: `sankofa todo "<text>"` (prints an id).
 - When a step needs the human (sudo, a login, a decision): `sankofa awaiting "<text>"`.
 - When an open item is finished: `sankofa done <id> "<text>"`.
-- Before editing paths another session or subagent might also touch:
-  `sankofa claim "<glob>"` (prints a lease id; exit 2 and the holder if someone
-  else has it). Check one path with `sankofa ask <path>`. When the edit is
-  finished: `sankofa done <lease-id>`. A lease you abandon expires on its own,
-  and the next claimant is told the edit may be half-finished.
+- Every file you edit is leased to you automatically by the edit gate. If an
+  edit is denied because another session or subagent holds the file, do not
+  work around it (no Bash rewrites of that file): work on something else, wait,
+  or tell the human. `sankofa ask <path>` says who holds a path.
+- To reserve a whole area before starting: `sankofa claim "<glob>"` (prints a
+  lease id; exit 2 and the holder if someone else has it). When finished:
+  `sankofa done <lease-id>`. Leases also end when your subagent or session
+  ends; an abandoned lease expires, and the next holder is told the edit may be
+  half-finished.
+- A commit that touches a path someone else holds is refused by the git gate.
 
 A Stop hook will refuse to let the session end while open items exist and
 this session has written no note. Writing the note is the fix.

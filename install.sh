@@ -11,8 +11,13 @@ BIN=${XDG_BIN_HOME:-$HOME/.local/bin}
 SETTINGS=${CLAUDE_SETTINGS:-$HOME/.claude/settings.json}
 UNIT_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user
 UNITS="sankofad.service sankofa-watch.service"
-STOP_CMD="sankofa hook stop"
-SUB_CMD="sankofa hook subagent-stop"
+# event | matcher | command  (the Claude Code adapter; see hooks/claude-code/)
+HOOKS='[
+  {"ev":"Stop","cmd":"sankofa hook stop"},
+  {"ev":"SubagentStop","cmd":"sankofa hook subagent-stop"},
+  {"ev":"SessionEnd","cmd":"sankofa hook session-end"},
+  {"ev":"PreToolUse","matcher":"Edit|Write|MultiEdit|NotebookEdit","cmd":"sankofad gate claude-code","timeout":5}
+]'
 
 command -v jq >/dev/null || { echo "install: jq is required" >&2; exit 1; }
 mkdir -p "$BIN" "$(dirname "$SETTINGS")"
@@ -30,10 +35,10 @@ if [ "${1:-}" = --uninstall ]; then
   rm -f "$BIN/sankofa" "$BIN/sankofa-watch" "$BIN/sankofad"
   backup
   tmp=$(mktemp)
-  jq --arg a "$STOP_CMD" --arg b "$SUB_CMD" '
+  jq --argjson hs "$HOOKS" '
     def strip(ev; c): if .hooks[ev] then .hooks[ev] |= map(.hooks |= map(select(.command != c)) | select(.hooks|length>0)) else . end
       | if .hooks[ev] == [] then del(.hooks[ev]) else . end;
-    strip("Stop"; $a) | strip("SubagentStop"; $b)
+    reduce $hs[] as $h (.; strip($h.ev; $h.cmd))
     | if .hooks == {} then del(.hooks) else . end' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
   echo "install: removed the sankofa commands from $BIN, the hooks from $SETTINGS, and both services"
   exit 0
@@ -43,18 +48,19 @@ ln -sf "$HERE/bin/sankofa" "$BIN/sankofa"
 ln -sf "$HERE/bin/sankofa-watch" "$BIN/sankofa-watch"
 echo "install: $BIN/sankofa and $BIN/sankofa-watch -> $HERE/bin"
 
-if jq -e --arg a "$STOP_CMD" --arg b "$SUB_CMD" '
-     ([.hooks.Stop[]?.hooks[]?.command] | index($a)) != null and
-     ([.hooks.SubagentStop[]?.hooks[]?.command] | index($b)) != null' "$SETTINGS" >/dev/null; then
+if jq -e --argjson hs "$HOOKS" '. as $s | all($hs[]; . as $h | ([$s.hooks[$h.ev][]?.hooks[]?.command] | index($h.cmd)) != null)' \
+     "$SETTINGS" >/dev/null; then
   echo "install: hooks already present in $SETTINGS"
 else
   backup
   tmp=$(mktemp)
-  jq --arg a "$STOP_CMD" --arg b "$SUB_CMD" '
-    def add(ev; c): if ([.hooks[ev][]?.hooks[]?.command] | index(c)) != null then . else
-        .hooks[ev] = ((.hooks[ev] // []) + [{hooks:[{type:"command",command:c}]}]) end;
-    add("Stop"; $a) | add("SubagentStop"; $b)' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
-  echo "install: added Stop and SubagentStop hooks to $SETTINGS (backup kept beside it)"
+  jq --argjson hs "$HOOKS" '
+    def add($h): if ([.hooks[$h.ev][]?.hooks[]?.command] | index($h.cmd)) != null then . else
+        .hooks[$h.ev] = ((.hooks[$h.ev] // []) + [
+          ({hooks:[{type:"command",command:$h.cmd} + (if $h.timeout then {timeout:$h.timeout} else {} end)]}
+           + (if $h.matcher then {matcher:$h.matcher} else {} end))]) end;
+    reduce $hs[] as $h (.; add($h))' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
+  echo "install: added the Stop, SubagentStop, SessionEnd and PreToolUse (edit gate) hooks to $SETTINGS (backup kept beside it)"
 fi
 
 DAEMON=$HERE/bin/out/sankofad
@@ -79,4 +85,4 @@ for u in $UNITS; do
   sysd enable "$u"; sysd restart "$u"
 done
 echo "install: user services installed in $UNIT_DIR"
-echo "install: run 'sankofa init' and 'sankofa watch add' in each repo that should keep a ledger"
+echo "install: in each repo that should keep a ledger: sankofa init; sankofa watch add; sankofa gate install"

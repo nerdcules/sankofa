@@ -154,7 +154,7 @@ public sealed class Server
                 }
                 case "claim":
                 {
-                    var c = store.Claim(Repo(), r.Glob ?? throw new SankofaException("claim needs a glob"), r.Session, r.Agent, r.Ttl, r.Wt);
+                    var c = store.Claim(Repo(), r.Glob ?? throw new SankofaException("claim needs a glob"), r.Session, r.Agent, r.Ttl, r.Wt, r.Inherit, r.Idle);
                     return new Response
                     {
                         Id = c.Event.Id, Granted = c.Granted, Renewed = c.Renewed, Lease = c.Lease,
@@ -174,6 +174,18 @@ public sealed class Server
                         State = a.State, Lease = a.Lease, Conflicts = a.Holders.Count > 1 ? a.Holders : null,
                         Warnings = a.Dirty.Count > 0 ? a.Dirty : null,
                     };
+                }
+                case "check":
+                    return new Response
+                    {
+                        Hits = store.Check(Repo(), r.Paths ?? [], r.Session, r.Agent)
+                            .Select(h => new Hit { Path = h.Path, Lease = h.Lease }).ToList(),
+                    };
+                case "finish":
+                {
+                    var done = store.Finish(Repo(), r.Session ?? throw new SankofaException("finish needs a session"),
+                                            r.Agent, string.IsNullOrWhiteSpace(r.Text) ? "finished" : r.Text!);
+                    return new Response { Entries = done };
                 }
                 case "leases":
                     return new Response { Leases = store.Leases(Repo()) };

@@ -9,6 +9,9 @@ printf '{"permissions":{"allow":["Bash(ls)"]}}\n' > "$CLAUDE_SETTINGS"
 [ -L "$HOME/.local/bin/sankofa" ] || fail "symlink missing"
 assert_eq "$(jq -r '.hooks.Stop[0].hooks[0].command' "$CLAUDE_SETTINGS")" "sankofa hook stop" "Stop hook added"
 assert_eq "$(jq -r '.hooks.SubagentStop[0].hooks[0].command' "$CLAUDE_SETTINGS")" "sankofa hook subagent-stop" "SubagentStop hook added"
+assert_eq "$(jq -r '.hooks.SessionEnd[0].hooks[0].command' "$CLAUDE_SETTINGS")" "sankofa hook session-end" "SessionEnd hook added"
+assert_eq "$(jq -c '.hooks.PreToolUse[0] | [.matcher, .hooks[0].command, .hooks[0].timeout]' "$CLAUDE_SETTINGS")" \
+  '["Edit|Write|MultiEdit|NotebookEdit","sankofad gate claude-code",5]' "edit gate added with matcher and timeout"
 assert_eq "$(jq -r '.permissions.allow[0]' "$CLAUDE_SETTINGS")" "Bash(ls)" "existing settings kept"
 ls "$HOME/.claude"/settings.json.bak-* >/dev/null || fail "no backup"
 

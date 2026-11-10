@@ -10,6 +10,8 @@ using Sankofa;
 //   sankofad send  [--socket P]            one JSON request on stdin -> response(s) on stdout
 //                                          exit 0 ok, 1 refused, 3 daemon unreachable (nothing sent),
 //                                          4 sent but no answer (the write may or may not have happened)
+//   sankofad gate claude-code|codex        pre-edit hook: JSON payload on stdin, deny JSON on stdout
+//   sankofad gate git-pre-commit           refuse staged paths someone else holds (exit 1)
 //   sankofad bench                         startup and ask round-trip timings, as JSON
 //   sankofad version
 
@@ -19,32 +21,19 @@ static string Opt(string[] args, string name, string fallback)
     return i >= 0 && i + 1 < args.Length ? args[i + 1] : fallback;
 }
 
-static string DefaultSocket()
-{
-    var env = Environment.GetEnvironmentVariable("SANKOFA_SOCKET");
-    if (!string.IsNullOrEmpty(env)) return env;
-    var run = Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR");
-    return string.IsNullOrEmpty(run) ? $"/tmp/sankofa-{Environment.UserName}/sankofad.sock" : Path.Combine(run, "sankofa", "sankofad.sock");
-}
-
-static string DefaultDb()
-{
-    var env = Environment.GetEnvironmentVariable("SANKOFA_DB");
-    if (!string.IsNullOrEmpty(env)) return env;
-    var data = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
-    if (string.IsNullOrEmpty(data)) data = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "share");
-    return Path.Combine(data, "sankofa", "sankofa.db");
-}
-
 var cmd = args.Length > 0 ? args[0] : "help";
 switch (cmd)
 {
-    case "serve": return Serve(Opt(args, "--socket", DefaultSocket()), Opt(args, "--db", DefaultDb()));
-    case "send": return Send(Opt(args, "--socket", DefaultSocket()));
+    case "serve": return Serve(Opt(args, "--socket", Defaults.Socket()), Opt(args, "--db", Defaults.Db()));
+    case "send": return Send(Opt(args, "--socket", Defaults.Socket()));
     case "bench": return Bench.Run();
+    case "gate" when args.Length > 1 && args[1] == "git-pre-commit": return Gate.PreCommit();
+    case "gate" when args.Length > 1:
+        try { return Gate.PreEdit(args[1]); }
+        catch (SankofaException ex) { Console.Error.WriteLine($"sankofad gate: {ex.Message}"); return 1; }
     case "version" or "--version" or "-V": Console.WriteLine($"sankofad {Store.Version}"); return 0;
     default:
-        Console.Error.WriteLine("usage: sankofad serve [--socket P] [--db P] | send [--socket P] | bench | version");
+        Console.Error.WriteLine("usage: sankofad serve [--socket P] [--db P] | send [--socket P] | gate claude-code|codex|git-pre-commit | bench | version");
         return cmd is "help" or "-h" or "--help" ? 0 : 2;
 }
 
@@ -149,10 +138,27 @@ static class Bench
                 c.WaitForExit();
                 if (i >= 10) perProcess.Add(sw.Elapsed.TotalMilliseconds);
             }
+            // the pre-edit gate as Claude Code runs it: one process per edit, holder already has the lease
+            var gate = new List<double>();
+            var payload = "{\"session_id\":\"bench\",\"cwd\":\"" + esc + "\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\""
+                        + JsonEncodedText.Encode(Path.Combine(repo, "src", "main.c")) + "\"}}";
+            var genv = new Dictionary<string, string> { ["SANKOFA_SOCKET"] = sock };
+            for (int i = 0; i < 60; i++)
+            {
+                var psi = new ProcessStartInfo(self, ["gate", "claude-code"]) { RedirectStandardInput = true, RedirectStandardOutput = true };
+                foreach (var (k, v) in genv) psi.Environment[k] = v;
+                var sw = Stopwatch.StartNew();
+                using var c = Process.Start(psi)!;
+                c.StandardInput.Write(payload);
+                c.StandardInput.Close();
+                c.StandardOutput.ReadToEnd();
+                c.WaitForExit();
+                if (i >= 10) gate.Add(sw.Elapsed.TotalMilliseconds);
+            }
             daemon.Kill(); daemon.WaitForExit();
             Console.WriteLine(string.Format(System.Globalization.CultureInfo.InvariantCulture,
-                "{{\"startup_ms\":{{\"p50\":{0:F2},\"max\":{1:F2}}},\"ask_socket_ms\":{{\"p50\":{2:F3},\"p99\":{3:F3}}},\"ask_process_ms\":{{\"p50\":{4:F2},\"p99\":{5:F2}}}}}",
-                P(startups, 50), startups.Max(), P(inproc, 50), P(inproc, 99), P(perProcess, 50), P(perProcess, 99)));
+                "{{\"startup_ms\":{{\"p50\":{0:F2},\"max\":{1:F2}}},\"ask_socket_ms\":{{\"p50\":{2:F3},\"p99\":{3:F3}}},\"ask_process_ms\":{{\"p50\":{4:F2},\"p99\":{5:F2}}},\"gate_process_ms\":{{\"p50\":{6:F2},\"p99\":{7:F2}}}}}",
+                P(startups, 50), startups.Max(), P(inproc, 50), P(inproc, 99), P(perProcess, 50), P(perProcess, 99), P(gate, 50), P(gate, 99)));
             return 0;
         }
         finally { Directory.Delete(dir, recursive: true); }

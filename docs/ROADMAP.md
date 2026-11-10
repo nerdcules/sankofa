@@ -76,6 +76,17 @@ the daemon is unreachable.
 Tests: two holders, same path, second edit denied; expired lease, second edit
 allowed; daemon down, edit allowed and a `flag` event written on reconnect.
 
+Outcome (0.4.0): the gate logic lives in `sankofad gate` (about 4 ms per edit
+as a process), with one adapter per client: Claude Code (`agent_id` names the
+subagent) and Codex (`apply_patch` headers name the files). SubagentStop and
+SessionEnd finish the holder's leases. `sim/gates.py` ran up to five agents at
+once on one repo, with and without the gate. Without it, about 17 clobbers per
+run; with it, none. The first version let a subagent take over its parent's
+file at once, and that clobbered the parent's in-flight edit about 3 times a
+run; a subagent now takes over only after the parent has left the file alone
+for `handover_idle` (default 5s), and the rerun had no clobbers across about 4
+handovers a run.
+
 ## 0.5 · mcp
 
 Deliver: `sankofad --mcp` stdio server exposing the same verbs; config snippets
