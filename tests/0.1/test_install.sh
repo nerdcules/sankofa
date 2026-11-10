@@ -5,7 +5,7 @@ export CODEX_HOME=$T/home/.codex PATH="$T/nobin:$PATH"
 mkdir -p "$CODEX_HOME" "$T/nobin"
 printf '#!/bin/sh\nexit 1\n' > "$T/nobin/claude"; chmod +x "$T/nobin/claude"   # a claude that registers nothing
 printf 'model = "x"\n\n[mcp_servers.other]\ncommand = "other"\n' > "$CODEX_HOME/config.toml"
-unset XDG_BIN_HOME XDG_CONFIG_HOME || true
+unset XDG_BIN_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME || true   # or install.sh would reach the real ones
 mkdir -p "$HOME/.claude"
 printf '{"permissions":{"allow":["Bash(ls)"]}}\n' > "$CLAUDE_SETTINGS"
 
