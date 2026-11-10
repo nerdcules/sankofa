@@ -313,6 +313,19 @@ cmd_hook() {
   kind=${1:-}
   case $kind in stop|subagent-stop|session-end) ;; *) die "hook stop|subagent-stop|session-end" ;; esac
   input=$(cat)
+  # Leases end with their holder in every repo, whatever directory the hook runs in:
+  # a session's subagents may have leased files in repos other than the session's cwd.
+  case $kind in
+    subagent-stop|session-end)
+      fin=$(printf '%s' "$input" | jq -c --arg kind "$kind" '
+        {verb:"finish", session:(.session_id // "-")}
+        + if $kind == "session-end" then {text:"session ended"}
+          elif (.agent_id // "") != "" then
+            {agent:"subagent:\((.agent_type // "") | if . == "" then "agent" else . end)/\(.agent_id)", text:"subagent finished"}
+          else {agent:"subagent:\(.agent_name // .agent_type // "unnamed")", text:"subagent finished"} end')
+      dcall "$fin" ;;
+  esac
+  [ "$kind" = session-end ] && exit 0
   ROOT=$(find_root) || exit 0
   LEDGER=$ROOT/.sankofa/ledger.jsonl; CONFIG=$ROOT/.sankofa/config
   [ -f "$LEDGER" ] || : > "$LEDGER"
@@ -330,10 +343,6 @@ cmd_hook() {
     agent=main
   fi
 
-  if [ "$kind" = session-end ]; then
-    dcall "$(jq -nc --arg repo "$ROOT" --arg session "$session" '{verb:"finish",repo:$repo,session:$session,text:"session ended"}')"
-    exit 0
-  fi
 
   nopen=$(open_items | grep -c . || true)
 
@@ -351,12 +360,15 @@ cmd_hook() {
       since=$(printf '%s' "$base" | cut -f1); base_wt=$(printf '%s' "$base" | cut -f2)
       edits=0
       if [ -n "$transcript" ] && [ -r "$transcript" ]; then
-        edits=$(jq -R --arg since "$since" '
+        # edits to files in this repo only; an edit tool call without a path counts to be safe
+        edits=$(jq -R --arg since "$since" --arg root "$ROOT/" '
           fromjson? // empty
           | select(.type=="assistant" and ((.timestamp // "") > $since))
           | .message.content[]?
           | select(type=="object" and .type=="tool_use"
-                   and (.name | IN("Edit","Write","MultiEdit","NotebookEdit"))) | .name' "$transcript" \
+                   and (.name | IN("Edit","Write","MultiEdit","NotebookEdit")))
+          | (.input.file_path // .input.notebook_path // "") as $p
+          | select($p == "" or ($p | startswith($root))) | .name' "$transcript" \
           | grep -c . || true)
       fi
       tree=same
@@ -377,10 +389,6 @@ cmd_hook() {
   fi
 
   append stop "${msg:-stopped}" "" "$session" "$agent" >/dev/null
-  if [ "$kind" = subagent-stop ]; then
-    dcall "$(jq -nc --arg repo "$ROOT" --arg session "$session" --arg agent "$agent" \
-              '{verb:"finish",repo:$repo,session:$session,agent:$agent,text:"subagent finished"}')"
-  fi
   exit 0
 }
 

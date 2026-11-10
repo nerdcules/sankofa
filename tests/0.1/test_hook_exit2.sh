@@ -31,6 +31,13 @@ run_hook stop "$(stop_json_t work "$TW")"; assert_eq "$RC" 2 "write after note: 
 SANKOFA_SESSION=work $S note "installer done"
 run_hook stop "$(stop_json_t work "$TW")"; assert_eq "$RC" 0 "second note: allowed"
 
+# edits to files outside this repo do not count; inside it they do
+TF=$T/far.jsonl; : > "$TF"; tx_tool "$TF" Edit /somewhere/else/x.c
+run_hook stop "$(stop_json_t far "$TF")"; assert_eq "$RC" 0 "edit outside the repo: allowed"
+tx_tool "$TF" Write "$(pwd -P)/inside.c"
+run_hook stop "$(stop_json_t far "$TF")"; assert_eq "$RC" 2 "edit inside the repo: blocked"
+SANKOFA_SESSION=far $S note "inside.c"
+
 # another session's note does not cover this session's edits
 TO=$T/other.jsonl; : > "$TO"; tx_tool "$TO" MultiEdit
 SANKOFA_SESSION=someone-else $S note "unrelated"

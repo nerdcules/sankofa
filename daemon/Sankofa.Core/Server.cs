@@ -183,7 +183,7 @@ public sealed class Server
                     };
                 case "finish":
                 {
-                    var done = store.Finish(Repo(), r.Session ?? throw new SankofaException("finish needs a session"),
+                    var done = store.Finish(r.Repo, r.Session ?? throw new SankofaException("finish needs a session"),
                                             r.Agent, string.IsNullOrWhiteSpace(r.Text) ? "finished" : r.Text!);
                     return new Response { Entries = done };
                 }

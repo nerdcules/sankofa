@@ -5,7 +5,7 @@
 $S init >/dev/null
 assert_contains "$($S daemon 2>&1 || :)" "not answering" "no daemon yet"
 start_daemon
-assert_contains "$($S daemon)" "sankofad 0.3.0" "daemon answers"
+assert_contains "$($S daemon)" "sankofad 0.4.0" "daemon answers"
 
 # ledger verbs go through the daemon and land in the mirror
 SANKOFA_SESSION=s1 $S note "first note"
