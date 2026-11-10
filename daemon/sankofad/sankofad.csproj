@@ -7,6 +7,7 @@
     <AssemblyName>sankofad</AssemblyName>
     <RootNamespace>Sankofa</RootNamespace>
     <PublishAot>true</PublishAot>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <InvariantGlobalization>true</InvariantGlobalization>
     <UseSystemResourceKeys>true</UseSystemResourceKeys>
     <StripSymbols>true</StripSymbols>

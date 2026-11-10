@@ -6,7 +6,7 @@
 # POSIX sh + jq.
 set -eu
 
-VERSION=0.4.0
+VERSION=0.5.0
 
 usage() {
   cat <<'USAGE'
@@ -157,6 +157,9 @@ append() {
 
 # local_append type text [ref] [session] [agent] [wt] [nonce]: the 0.1 path, no daemon
 local_append() {
+  # the same lock sankofad and the gate take, so concurrent writers never pick the same id
+  locked=0
+  if command -v flock >/dev/null 2>&1; then exec 9>>"$ROOT/.sankofa/ledger.lock"; flock 9; locked=1; fi
   id=$(next_id)
   jq -nc \
     --arg ts "$(now)" --arg id "$id" --arg type "$1" --arg text "$2" \
@@ -166,6 +169,7 @@ local_append() {
      + (if $ref != "" then {ref:$ref} else {} end)
      + (if $wt != "-" then {wt:$wt} else {} end)
      + (if $nonce != "" then {nonce:$nonce} else {} end)' >> "$LEDGER"
+  [ "$locked" = 1 ] && { flock -u 9; exec 9>&-; }
   printf '%s\n' "$id"
 }
 
@@ -179,7 +183,9 @@ open_items() { # id \t type \t ts \t text
 
 render() { jq -r '"\(.ts)  \(.id)  \(.type)\t[\(.agent)]  \(.text)\(if .ref then "  (\(.ref))" else "" end)"'; }
 
-item_exists() { jq -e --arg id "$1" 'select(.id==$id and (.type=="todo" or .type=="awaiting"))' "$LEDGER" >/dev/null 2>&1; }
+item_exists() { jq -e --arg id "$1" 'select(.id==$id and (.type=="todo" or .type=="awaiting" or .type=="claim"))' "$LEDGER" >/dev/null 2>&1; }
+# a claim with no done yet (whether it is still live is the daemon's call; it applies the done on import)
+lease_unfinished() { jq -se --arg id "$1" 'any(.[]; .id==$id and .type=="claim") and (any(.[]; .type=="done" and .ref==$id) | not)' "$LEDGER" >/dev/null 2>&1; }
 
 cmd_init() {
   [ -d .sankofa ] && { echo "sankofa: .sankofa/ already exists"; exit 0; }
@@ -208,7 +214,7 @@ cmd_done() {
     *) die "$(derr)" ;;
   esac
   item_exists "$id" || die "no open item with id $id"
-  if open_items | cut -f1 | grep -qx "$id"; then
+  if open_items | cut -f1 | grep -qx "$id" || lease_unfinished "$id"; then
     local_append done "${*:-resolved}" "$id" "" "" "" "$nonce" >/dev/null
   else
     die "$id is already resolved"

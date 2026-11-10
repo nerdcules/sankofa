@@ -32,10 +32,10 @@ sankofad ── SQLite, append-only events, leases with expiry
 
 ## Status
 
-Iteration 0.4: shell ledger, Stop hooks, desktop toasts for items that need
-you, `sankofad` (an SQLite event log and path leases), and the gates: every
-edit is leased before it happens, and git refuses commits on someone else's
-paths. See `docs/ROADMAP.md` for what comes next. Each iteration ships with
+Iteration 0.5: shell ledger, Stop hooks, desktop toasts for items that need
+you, `sankofad` (an SQLite event log and path leases), the gates (every edit
+is leased before it happens; git refuses commits on someone else's paths), and
+an MCP server so any MCP client can use the ledger without a shell. See `docs/ROADMAP.md` for what comes next. Each iteration ships with
 tests, and its usage gate is run as an accelerated simulation (`sim/`) against
 the real code before the next starts.
 
@@ -123,6 +123,28 @@ only records and answers.
 
 Turn the gates off for a repo with `gate=0` in `.sankofa/config`.
 
+## MCP
+
+`sankofad mcp` (the same as `sankofa-mcp`, a separate binary so the per-edit
+gate stays small and fast) is a stdio MCP server with the CLI's verbs as tools: `open`,
+`last`, `note`, `todo`, `awaiting`, `done`, `claim`, `release`, `ask`,
+`leases`. Each takes an optional `repo` (default: the client's working
+directory). Each tool runs the CLI, so MCP writes go through the daemon or the
+same local fallback. A failure is a tool error (`isError`), never a dead
+server. A refused claim is an answer: it names the holder. `install.sh`
+registers it with both clients; by hand:
+
+```sh
+claude mcp add --scope user sankofa -- sankofad mcp
+```
+
+```toml
+# ~/.codex/config.toml
+[mcp_servers.sankofa]
+command = "sankofad"
+args = ["mcp"]
+```
+
 ## Simulations
 
 ```sh
@@ -130,6 +152,7 @@ python3 sim/week.py     # Stop rule: blocks, nags, missed handoffs per simulated
 python3 sim/notify.py   # notifier: exactly-once delivery, latency, toasts per day
 python3 sim/daemon.py   # sankofad under SIGKILL every few seconds: no lost or doubled writes
 python3 sim/gates.py    # agents editing one repo at once: clobbers with and without the gates
+python3 sim/mcp.py      # Claude Code and Codex MCP clients on one ledger, daemon killed mid-run
 ```
 
 Each drives the real CLI, hook, watcher, and daemon with synthetic sessions.

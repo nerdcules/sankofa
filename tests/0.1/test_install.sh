@@ -1,6 +1,10 @@
 #!/bin/sh
 . "$(dirname "$0")/lib.sh"
 export HOME=$T/home CLAUDE_SETTINGS=$T/home/.claude/settings.json SANKOFA_NO_SYSTEMD=1 SANKOFA_NO_BUILD=1
+export CODEX_HOME=$T/home/.codex PATH="$T/nobin:$PATH"
+mkdir -p "$CODEX_HOME" "$T/nobin"
+printf '#!/bin/sh\nexit 1\n' > "$T/nobin/claude"; chmod +x "$T/nobin/claude"   # a claude that registers nothing
+printf 'model = "x"\n\n[mcp_servers.other]\ncommand = "other"\n' > "$CODEX_HOME/config.toml"
 unset XDG_BIN_HOME XDG_CONFIG_HOME || true
 mkdir -p "$HOME/.claude"
 printf '{"permissions":{"allow":["Bash(ls)"]}}\n' > "$CLAUDE_SETTINGS"
@@ -17,11 +21,14 @@ ls "$HOME/.claude"/settings.json.bak-* >/dev/null || fail "no backup"
 
 "$ROOT/install.sh" >/dev/null
 assert_eq "$(jq '.hooks.Stop|length' "$CLAUDE_SETTINGS")" 1 "idempotent"
+assert_eq "$(grep -c '^\[mcp_servers.sankofa\]' "$CODEX_HOME/config.toml")" 1 "Codex MCP server registered once"
+assert_contains "$(cat "$CODEX_HOME/config.toml")" 'args = ["mcp"]' "Codex runs sankofad mcp"
 
 U=$HOME/.config/systemd/user/sankofa-watch.service
 UD=$HOME/.config/systemd/user/sankofad.service
 if [ -x "$ROOT/bin/out/sankofad" ]; then
   [ -L "$HOME/.local/bin/sankofad" ] || fail "daemon symlink missing"
+  [ -L "$HOME/.local/bin/sankofa-mcp" ] || fail "MCP server symlink missing"
   assert_contains "$(cat "$UD")" "ExecStart=$HOME/.local/bin/sankofad serve" "daemon unit points at the daemon"
 fi
 [ -L "$HOME/.local/bin/sankofa-watch" ] || fail "watcher symlink missing"
@@ -30,7 +37,10 @@ assert_contains "$(cat "$U")" "ExecStart=$HOME/.local/bin/sankofa-watch" "unit p
 "$ROOT/install.sh" --uninstall >/dev/null
 [ ! -e "$U" ] || fail "unit not removed"
 [ ! -e "$UD" ] || fail "daemon unit not removed"
+assert_eq "$(grep -c sankofa "$CODEX_HOME/config.toml" || true)" 0 "Codex registration removed"
+assert_contains "$(cat "$CODEX_HOME/config.toml")" "[mcp_servers.other]" "other Codex servers kept"
 [ ! -e "$HOME/.local/bin/sankofad" ] || fail "daemon symlink not removed"
+[ ! -e "$HOME/.local/bin/sankofa-mcp" ] || fail "MCP server symlink not removed"
 [ ! -e "$HOME/.local/bin/sankofa-watch" ] || fail "watcher symlink not removed"
 [ ! -e "$HOME/.local/bin/sankofa" ] || fail "symlink not removed"
 assert_eq "$(jq -r '.hooks // "none"' "$CLAUDE_SETTINGS")" none "hooks removed"
