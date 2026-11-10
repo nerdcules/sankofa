@@ -1,8 +1,10 @@
 # Roadmap
 
 Rules: one iteration at a time; every iteration has tests that run with
-`make test`; an iteration is used for real work before the next begins; each
-ships as a git tag.
+`make test`; each ships as a git tag. An iteration's usage gate ("used for a
+week") is run as an accelerated simulation under `sim/` that drives the real
+code with synthetic sessions; real use continues alongside but does not block
+the next iteration (decided 2026-11-10).
 
 ## 0.1 · handoff (shell)
 
@@ -22,6 +24,11 @@ Tests (`tests/0.1/*.sh`, plain sh, no framework):
 Exit: used for a week on a real project. Decide if the "exit 2" rule is a help
 or a nag.
 
+Outcome (0.1.1, `sim/week.py`): the first rule (block when nothing was written
+since the last stop) was a nag, about 40 pointless blocks a week. The rule now
+blocks only when this session edited files (transcript Edit/Write, or a changed
+git working tree) since its own last ledger write.
+
 ## 0.2 · notify (shell + systemd user unit)
 
 Deliver: `sankofa-watch` service: inotify on every registered ledger, toast on
@@ -29,6 +36,12 @@ new `awaiting` or `note` entries; `sankofa watch add <repo>`.
 
 Tests: fake `notify-send` on PATH; append an entry; assert one toast with the
 expected title.
+
+Outcome (0.2.0, `sim/notify.py`): exactly-once delivery across a simulated
+reboot, sub-second latency. Note toasts were about 97% of all toasts, so the
+default is `awaiting` only and notes are opt-in (`SANKOFA_TOAST_TYPES`).
+Offsets persist in `$XDG_STATE_HOME/sankofa/offsets`; bursts become one
+summary toast.
 
 ## 0.3 · sankofad (C#, Native AOT)
 
