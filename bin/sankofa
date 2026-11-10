@@ -93,8 +93,11 @@ next_id() { printf 'e%s' "$(( $(wc -l < "$LEDGER") + 1 ))"; }
 
 # --- sankofad -------------------------------------------------------------------
 sock_path() {
+  # clients may start us with a minimal environment (Codex does for MCP servers), so when
+  # XDG_RUNTIME_DIR is unset use the directory systemd gives it: /run/user/<uid>
   if [ -n "${SANKOFA_SOCKET:-}" ]; then printf '%s' "$SANKOFA_SOCKET"
   elif [ -n "${XDG_RUNTIME_DIR:-}" ]; then printf '%s' "$XDG_RUNTIME_DIR/sankofa/sankofad.sock"
+  elif [ -d "/run/user/$(id -u)" ]; then printf '/run/user/%s/sankofa/sankofad.sock' "$(id -u)"
   else printf '/tmp/sankofa-%s/sankofad.sock' "$(id -un)"; fi
 }
 daemon_bin() {
