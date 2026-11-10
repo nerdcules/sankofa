@@ -1,37 +1,48 @@
 #!/bin/sh
+# The Stop hook blocks only when this session changed something it has not written up.
 . "$(dirname "$0")/lib.sh"
 $S init >/dev/null
-
-# previous session left an open item and stopped
 SANKOFA_SESSION=old $S todo "finish the installer" >/dev/null
-SANKOFA_SESSION=old $S note "handing off"
-run_hook stop "$(stop_json old)"; assert_eq "$RC" 0 "old session stops cleanly"
-n=$(lines .sankofa/ledger.jsonl)
+TX=$T/tx.jsonl; : > "$TX"
 
-# new session stops with no note: blocked with a helpful message, nothing appended
-run_hook stop "$(stop_json new)"
-assert_eq "$RC" 2 "exit code 2"
+# a reply that only answers a question, with an item open: never blocked
+run_hook stop "$(stop_json_t ask "$TX")"; assert_eq "$RC" 0 "no edits: allowed"
+tx_tool "$TX" Bash; tx_tool "$TX" Read
+run_hook stop "$(stop_json_t ask "$TX")"; assert_eq "$RC" 0 "read-only tools: allowed"
+
+# an Edit with no ledger write from this session: blocked, helpful message, nothing appended
+n=$(lines .sankofa/ledger.jsonl)
+TW=$T/work.jsonl; : > "$TW"; tx_tool "$TW" Edit
+run_hook stop "$(stop_json_t work "$TW")"
+assert_eq "$RC" 2 "edit without note: exit 2"
 assert_contains "$ERR" "1 open item" "message counts open items"
+assert_contains "$ERR" "1 file edit" "message says why"
 assert_contains "$ERR" "finish the installer" "message lists the item"
 assert_eq "$(lines .sankofa/ledger.jsonl)" "$n" "blocked stop appends nothing"
 
-# stop_hook_active true (already continued once): never block again
-run_hook stop "$(stop_json new true)"; assert_eq "$RC" 0 "stop_hook_active bypass"
-assert_eq "$(lines .sankofa/ledger.jsonl)" $((n+1)) "bypassed stop is recorded"
+# stop_hook_active (already continued once): never block twice
+run_hook stop "$(stop_json_t work "$TW" true)"; assert_eq "$RC" 0 "stop_hook_active bypass"
 
-# env override and config off: allowed
-SANKOFA_REQUIRE_NOTE=0 run_hook stop "$(stop_json new2)"; assert_eq "$RC" 0 "env override allows"
+# a note after the edit unblocks; a later Edit blocks again; Write counts too
+SANKOFA_SESSION=work $S note "installer half done"
+run_hook stop "$(stop_json_t work "$TW")"; assert_eq "$RC" 0 "note after edit: allowed"
+tx_tool "$TW" Write
+run_hook stop "$(stop_json_t work "$TW")"; assert_eq "$RC" 2 "write after note: blocked"
+SANKOFA_SESSION=work $S note "installer done"
+run_hook stop "$(stop_json_t work "$TW")"; assert_eq "$RC" 0 "second note: allowed"
+
+# another session's note does not cover this session's edits
+TO=$T/other.jsonl; : > "$TO"; tx_tool "$TO" MultiEdit
+SANKOFA_SESSION=someone-else $S note "unrelated"
+run_hook stop "$(stop_json_t other "$TO")"; assert_eq "$RC" 2 "someone else's note: still blocked"
+
+# env override and config off
+SANKOFA_REQUIRE_NOTE=0 run_hook stop "$(stop_json_t other "$TO")"; assert_eq "$RC" 0 "env override allows"
 printf 'require_note=0\n' > .sankofa/config
-run_hook stop "$(stop_json new3)"; assert_eq "$RC" 0 "config off allows"
+run_hook stop "$(stop_json_t other "$TO")"; assert_eq "$RC" 0 "config off allows"
 printf 'require_note=1\n' > .sankofa/config
 
-# after a note in this session: allowed
-run_hook stop "$(stop_json new4)"; assert_eq "$RC" 2 "still blocked before note"
-SANKOFA_SESSION=new4 $S note "installer finished"
-run_hook stop "$(stop_json new4)"; assert_eq "$RC" 0 "note unblocks"
-
-# resolving the only open item also unblocks a later session
+# nothing open: allowed even with edits
 $S done e1 >/dev/null
-run_hook stop "$(stop_json new5)"; assert_eq "$RC" 0 "done counts as activity"
-run_hook stop "$(stop_json new6)"; assert_eq "$RC" 0 "nothing open: allowed"
+run_hook stop "$(stop_json_t other "$TO")"; assert_eq "$RC" 0 "nothing open: allowed"
 echo "ok hook exit2"

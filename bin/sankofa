@@ -4,7 +4,7 @@
 # POSIX sh + jq. No daemon yet.
 set -eu
 
-VERSION=0.1.0
+VERSION=0.1.1
 
 usage() {
   cat <<'USAGE'
@@ -25,6 +25,12 @@ usage: sankofa <command> [args]
 Ledger: <repo>/.sankofa/ledger.jsonl, append-only.
 Config: <repo>/.sankofa/config, lines of key=value. Keys: require_note=0|1
 Env:    SANKOFA_REQUIRE_NOTE overrides require_note; SANKOFA_AGENT names the writer.
+
+The Stop hook blocks (exit 2) only when all of these hold: require_note is on,
+the ledger has open items, and this session changed something it has not yet
+written up. "Changed" means an Edit/Write/MultiEdit/NotebookEdit call in the
+session transcript, or a different git working tree, since the session's own
+last ledger write. A reply that only answers a question is never blocked.
 USAGE
 }
 
@@ -46,7 +52,24 @@ need_root() {
   [ -f "$LEDGER" ] || : > "$LEDGER"
 }
 
-now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+now() { # millisecond UTC timestamps, comparable with Claude Code transcript timestamps
+  t=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)
+  case $t in *N*) date -u +%Y-%m-%dT%H:%M:%SZ ;; *) printf '%s\n' "$t" ;; esac
+}
+
+# Fingerprint of the git working tree under $ROOT, ignoring .sankofa/. Prints - outside git.
+wt_fp() {
+  git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1 || { printf -; return 0; }
+  (
+    cd "$ROOT" || exit 0
+    x=':(exclude).sankofa'
+    git rev-parse -q --verify HEAD 2>/dev/null || :
+    if git rev-parse -q --verify HEAD >/dev/null 2>&1; then git diff HEAD -- . "$x"
+    else git diff --cached -- . "$x"; git diff -- . "$x"; fi
+    u=$(git ls-files -o --exclude-standard -- . "$x")
+    if [ -n "$u" ]; then printf '%s\n' "$u"; printf '%s\n' "$u" | git hash-object --stdin-paths; fi
+  ) 2>/dev/null | cksum | cut -d' ' -f1
+}
 session_id() { printf '%s' "${CLAUDE_CODE_SESSION_ID:-${CLAUDE_SESSION_ID:-${SANKOFA_SESSION:--}}}"; }
 agent_name() { printf '%s' "${SANKOFA_AGENT:-main}"; }
 next_id() { printf 'e%s' "$(( $(wc -l < "$LEDGER") + 1 ))"; }
@@ -63,8 +86,10 @@ append() {
   jq -nc \
     --arg ts "$(now)" --arg id "$id" --arg type "$1" --arg text "$2" \
     --arg ref "${3:-}" --arg session "${4:-$(session_id)}" --arg agent "${5:-$(agent_name)}" \
+    --arg wt "$(wt_fp)" \
     '{ts:$ts,id:$id,type:$type,session:$session,agent:$agent,text:$text}
-     + (if $ref != "" then {ref:$ref} else {} end)' >> "$LEDGER"
+     + (if $ref != "" then {ref:$ref} else {} end)
+     + (if $wt != "-" then {wt:$wt} else {} end)' >> "$LEDGER"
   printf '%s\n' "$id"
 }
 
@@ -123,6 +148,7 @@ cmd_hook() {
   [ -f "$LEDGER" ] || : > "$LEDGER"
 
   session=$(printf '%s' "$input" | jq -r '.session_id // "-"')
+  transcript=$(printf '%s' "$input" | jq -r '.transcript_path // ""')
   active=$(printf '%s' "$input" | jq -r '.stop_hook_active // false')
   msg=$(printf '%s' "$input" | jq -r '.last_assistant_message // ""' | tr '\n\t' '  ' | cut -c1-400)
   if [ "$kind" = subagent-stop ]; then
@@ -136,13 +162,33 @@ cmd_hook() {
   if [ "$kind" = stop ]; then
     require=${SANKOFA_REQUIRE_NOTE:-$(cfg require_note 1)}
     if [ "$require" = 1 ] && [ "$active" != true ] && [ "$nopen" -gt 0 ]; then
-      noted=$(jq -s '
-        (map(.type=="stop" and .agent=="main") | rindex(true)) as $i
-        | .[(($i // -1) + 1):]
-        | any(.type | IN("note","todo","awaiting","done"))' "$LEDGER")
-      if [ "$noted" != true ]; then
+      # Baseline: this session's last ledger write. Before its first write, the tree as the
+      # ledger last saw it before this session showed up, and every transcript edit counts.
+      base=$(jq -rs --arg s "$session" '
+        (map(select(.session==$s and (.type|IN("note","todo","awaiting","done")))) | last) as $w
+        | ((map(.session==$s) | index(true)) // length) as $i
+        | (.[:$i] | map(select(.wt)) | last) as $pre
+        | if $w then [$w.ts, ($w.wt // "-")]
+          else ["", ($pre.wt // "-")] end | @tsv' "$LEDGER")
+      since=$(printf '%s' "$base" | cut -f1); base_wt=$(printf '%s' "$base" | cut -f2)
+      edits=0
+      if [ -n "$transcript" ] && [ -r "$transcript" ]; then
+        edits=$(jq -R --arg since "$since" '
+          fromjson? // empty
+          | select(.type=="assistant" and ((.timestamp // "") > $since))
+          | .message.content[]?
+          | select(type=="object" and .type=="tool_use"
+                   and (.name | IN("Edit","Write","MultiEdit","NotebookEdit"))) | .name' "$transcript" \
+          | grep -c . || true)
+      fi
+      tree=same
+      [ "$base_wt" != - ] && [ "$(wt_fp)" != "$base_wt" ] && tree=changed
+      if [ "$edits" -gt 0 ] || [ "$tree" = changed ]; then
         {
-          printf 'sankofa: %s open item(s) in the ledger and no note from this session.\n' "$nopen"
+          why=""
+          [ "$edits" -gt 0 ] && why="$edits file edit(s)"
+          [ "$tree" = changed ] && why="${why:+$why, }working tree changed"
+          printf 'sankofa: %s open item(s) in the ledger, and this session changed things (%s) since its last ledger note.\n' "$nopen" "$why"
           printf 'Before stopping, run: sankofa note "<what changed; what is still open>"\n'
           printf 'and sankofa done <id> for anything on this list that is finished:\n'
           open_items | awk -F'\t' '{ printf "  %s  %s  %s\n", $1, $2, $4 }'
