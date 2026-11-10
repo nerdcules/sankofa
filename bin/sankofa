@@ -1,0 +1,176 @@
+#!/bin/sh
+# sankofa - go back and fetch it.
+# Iteration 0.1: an append-only JSONL ledger per repo, plus Stop hooks.
+# POSIX sh + jq. No daemon yet.
+set -eu
+
+VERSION=0.1.0
+
+usage() {
+  cat <<'USAGE'
+usage: sankofa <command> [args]
+
+  init                 create .sankofa/ in the current directory
+  note <text>          record what changed or was decided
+  todo <text>          record an open item (prints its id)
+  awaiting <text>      record an item that needs the human (prints its id)
+  done <id> [text]     resolve a todo or awaiting item
+  open                 list unresolved items
+  last [n]             show the newest n entries (default 5)
+  log                  show the whole ledger
+  hook stop            Stop hook: reads hook JSON on stdin
+  hook subagent-stop   SubagentStop hook: reads hook JSON on stdin
+  version
+
+Ledger: <repo>/.sankofa/ledger.jsonl, append-only.
+Config: <repo>/.sankofa/config, lines of key=value. Keys: require_note=0|1
+Env:    SANKOFA_REQUIRE_NOTE overrides require_note; SANKOFA_AGENT names the writer.
+USAGE
+}
+
+die() { printf 'sankofa: %s\n' "$*" >&2; exit 1; }
+
+find_root() {
+  d=$PWD
+  while :; do
+    if [ -d "$d/.sankofa" ]; then printf '%s' "$d"; return 0; fi
+    [ "$d" = / ] && return 1
+    d=$(dirname "$d")
+  done
+}
+
+need_root() {
+  ROOT=$(find_root) || die "no .sankofa/ here or above; run 'sankofa init' in the repo root"
+  LEDGER=$ROOT/.sankofa/ledger.jsonl
+  CONFIG=$ROOT/.sankofa/config
+  [ -f "$LEDGER" ] || : > "$LEDGER"
+}
+
+now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+session_id() { printf '%s' "${CLAUDE_CODE_SESSION_ID:-${CLAUDE_SESSION_ID:-${SANKOFA_SESSION:--}}}"; }
+agent_name() { printf '%s' "${SANKOFA_AGENT:-main}"; }
+next_id() { printf 'e%s' "$(( $(wc -l < "$LEDGER") + 1 ))"; }
+
+cfg() { # cfg key default
+  v=""
+  [ -f "$CONFIG" ] && v=$(grep -E "^$1=" "$CONFIG" 2>/dev/null | tail -n1 | cut -d= -f2-)
+  printf '%s' "${v:-$2}"
+}
+
+# append type text [ref] [session] [agent]
+append() {
+  id=$(next_id)
+  jq -nc \
+    --arg ts "$(now)" --arg id "$id" --arg type "$1" --arg text "$2" \
+    --arg ref "${3:-}" --arg session "${4:-$(session_id)}" --arg agent "${5:-$(agent_name)}" \
+    '{ts:$ts,id:$id,type:$type,session:$session,agent:$agent,text:$text}
+     + (if $ref != "" then {ref:$ref} else {} end)' >> "$LEDGER"
+  printf '%s\n' "$id"
+}
+
+open_items() { # id \t type \t ts \t text
+  jq -rs '
+    ([.[] | select(.type=="done") | .ref]) as $done
+    | .[]
+    | select((.type=="todo" or .type=="awaiting") and (IN(.id; $done[]) | not))
+    | [.id, .type, .ts, .text] | @tsv' "$LEDGER"
+}
+
+render() { jq -r '"\(.ts)  \(.id)  \(.type)\t[\(.agent)]  \(.text)\(if .ref then "  (\(.ref))" else "" end)"'; }
+
+item_exists() { jq -e --arg id "$1" 'select(.id==$id and (.type=="todo" or .type=="awaiting"))' "$LEDGER" >/dev/null 2>&1; }
+
+cmd_init() {
+  [ -d .sankofa ] && { echo "sankofa: .sankofa/ already exists"; exit 0; }
+  mkdir .sankofa
+  : > .sankofa/ledger.jsonl
+  printf 'require_note=1\n' > .sankofa/config
+  echo "sankofa: initialised .sankofa/ (ledger.jsonl, config)"
+}
+
+cmd_note()     { [ $# -ge 1 ] || die "note needs text"; need_root; append note "$*" >/dev/null; }
+cmd_todo()     { [ $# -ge 1 ] || die "todo needs text"; need_root; append todo "$*"; }
+cmd_awaiting() { [ $# -ge 1 ] || die "awaiting needs text"; need_root; append awaiting "$*"; }
+
+cmd_done() {
+  [ $# -ge 1 ] || die "done needs an id"
+  need_root
+  id=$1; shift
+  item_exists "$id" || die "no open item with id $id"
+  if open_items | cut -f1 | grep -qx "$id"; then
+    append done "${*:-resolved}" "$id" >/dev/null
+  else
+    die "$id is already resolved"
+  fi
+}
+
+cmd_open() {
+  need_root
+  out=$(open_items)
+  if [ -z "$out" ]; then echo "no open items"; return 0; fi
+  printf '%s\n' "$out" | awk -F'\t' '{ printf "%-5s %-9s %s  %s\n", $1, $2, $3, $4 }'
+}
+
+cmd_last() { need_root; tail -n "${1:-5}" "$LEDGER" | render; }
+cmd_log()  { need_root; render < "$LEDGER"; }
+
+# Hook: reads Claude Code hook JSON on stdin. Silent no-op outside a sankofa repo.
+cmd_hook() {
+  kind=${1:-}; [ "$kind" = stop ] || [ "$kind" = subagent-stop ] || die "hook stop|subagent-stop"
+  input=$(cat)
+  ROOT=$(find_root) || exit 0
+  LEDGER=$ROOT/.sankofa/ledger.jsonl; CONFIG=$ROOT/.sankofa/config
+  [ -f "$LEDGER" ] || : > "$LEDGER"
+
+  session=$(printf '%s' "$input" | jq -r '.session_id // "-"')
+  active=$(printf '%s' "$input" | jq -r '.stop_hook_active // false')
+  msg=$(printf '%s' "$input" | jq -r '.last_assistant_message // ""' | tr '\n\t' '  ' | cut -c1-400)
+  if [ "$kind" = subagent-stop ]; then
+    agent="subagent:$(printf '%s' "$input" | jq -r '.agent_name // .agent_type // .agent_id // "unnamed"')"
+  else
+    agent=main
+  fi
+
+  nopen=$(open_items | grep -c . || true)
+
+  if [ "$kind" = stop ]; then
+    require=${SANKOFA_REQUIRE_NOTE:-$(cfg require_note 1)}
+    if [ "$require" = 1 ] && [ "$active" != true ] && [ "$nopen" -gt 0 ]; then
+      noted=$(jq -s '
+        (map(.type=="stop" and .agent=="main") | rindex(true)) as $i
+        | .[(($i // -1) + 1):]
+        | any(.type | IN("note","todo","awaiting","done"))' "$LEDGER")
+      if [ "$noted" != true ]; then
+        {
+          printf 'sankofa: %s open item(s) in the ledger and no note from this session.\n' "$nopen"
+          printf 'Before stopping, run: sankofa note "<what changed; what is still open>"\n'
+          printf 'and sankofa done <id> for anything on this list that is finished:\n'
+          open_items | awk -F'\t' '{ printf "  %s  %s  %s\n", $1, $2, $4 }'
+        } >&2
+        exit 2
+      fi
+    fi
+  fi
+
+  append stop "${msg:-stopped}" "" "$session" "$agent" >/dev/null
+  exit 0
+}
+
+main() {
+  cmd=${1:-}; [ $# -gt 0 ] && shift
+  case "$cmd" in
+    init)      cmd_init "$@" ;;
+    note)      cmd_note "$@" ;;
+    todo)      cmd_todo "$@" ;;
+    awaiting)  cmd_awaiting "$@" ;;
+    done)      cmd_done "$@" ;;
+    open)      cmd_open "$@" ;;
+    last)      cmd_last "$@" ;;
+    log)       cmd_log "$@" ;;
+    hook)      cmd_hook "$@" ;;
+    version|-V|--version) echo "sankofa $VERSION" ;;
+    ""|help|-h|--help) usage ;;
+    *) die "unknown command '$cmd' (try: sankofa help)" ;;
+  esac
+}
+main "$@"

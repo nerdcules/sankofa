@@ -6,10 +6,11 @@ ships as a git tag.
 
 ## 0.1 · handoff (shell)
 
-Deliver: `bin/sankofa` (POSIX sh) with `note`, `awaiting`, `open`, `last`;
-hooks `hooks/stop.sh` and `hooks/subagent-stop.sh` that append a structured
-entry to `.sankofa/ledger.md` in the repo; `AGENTS.md` stanza; install script
-that wires the hooks into Claude Code settings.
+Deliver: `bin/sankofa` (POSIX sh) with `note`, `todo`, `awaiting`, `done`,
+`open`, `last`, `log`; hooks `hooks/stop.sh` and `hooks/subagent-stop.sh`
+that append a structured entry to `.sankofa/ledger.jsonl` in the repo (JSONL,
+not markdown: jq can query it and `log` renders it); `AGENTS.md` stanza;
+install script that wires the hooks into Claude Code settings.
 
 Tests (`tests/0.1/*.sh`, plain sh, no framework):
 - feeding a Stop-hook JSON payload produces one ledger entry with timestamp,
