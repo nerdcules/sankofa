@@ -1,0 +1,461 @@
+<title>Agent Channel Map</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column, figures full-width inside it, wiring-diagram feel (thin rules, mono labels). */
+:root {
+  --bg: #F5F7FA;
+  --surface: #FFFFFF;
+  --fg: #1B2430;
+  --muted: #5E6B7A;
+  --line: #C6CFDA;
+  --accent: #0E7490;      /* what comes back across a boundary */
+  --accent-soft: #D8EEF4;
+  --warn: #B45309;        /* a hard stop */
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121820; --surface: #1A2230; --fg: #E4EAF1; --muted: #9AA8B8; --line: #35435A;
+    --accent: #38BDD8; --accent-soft: #163643; --warn: #F0A24B; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #121820; --surface: #1A2230; --fg: #E4EAF1; --muted: #9AA8B8; --line: #35435A;
+  --accent: #38BDD8; --accent-soft: #163643; --warn: #F0A24B; color-scheme: dark;
+}
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--font-body);
+  font-size: 16px; line-height: 1.55;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 32px 64px;
+}
+main { max-width: 980px; margin: 0 auto; }
+h1 { font-size: 1.9rem; font-weight: 600; letter-spacing: -0.01em; margin: 0 0 6px; text-wrap: balance; }
+h2 { font-size: 1.2rem; font-weight: 600; margin: 48px 0 8px; text-wrap: balance; }
+p { max-width: 68ch; margin: 0 0 12px; }
+.lede { color: var(--muted); font-size: 1.05rem; max-width: 70ch; }
+.eyebrow { font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 0 0 4px; }
+figure { margin: 16px 0 0; }
+.frame { background: var(--surface); border: 1px solid var(--line); overflow-x: auto; padding: 8px; }
+svg { display: block; max-width: 100%; height: auto; min-width: 640px; font-family: var(--font-body); color: var(--fg); }
+svg .mono { font-family: var(--font-mono); }
+figcaption { color: var(--muted); font-size: 0.9rem; margin-top: 8px; max-width: 75ch; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 0.85rem; color: var(--muted); margin-top: 10px; }
+.legend span { display: inline-flex; align-items: center; gap: 8px; }
+.legend i { display: inline-block; width: 28px; height: 0; border-top: 2px solid currentColor; }
+.legend i.ret { border-color: var(--accent); }
+.legend i.dash { border-top-style: dashed; }
+.legend i.stop { border-color: var(--warn); border-top-style: dotted; }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; margin-top: 12px; }
+.tablewrap { overflow-x: auto; }
+th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+th { font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-weight: 500; }
+td:first-child { font-weight: 600; white-space: nowrap; }
+td code, p code, li code { font-family: var(--font-mono); font-size: 0.85em; background: var(--accent-soft); padding: 1px 5px; border-radius: 3px; }
+.nope { color: var(--warn); font-weight: 500; }
+ul { max-width: 70ch; padding-left: 20px; margin: 0; }
+li { margin-bottom: 6px; }
+li > * { min-width: 0; }
+.src { font-size: 0.8rem; color: var(--muted); margin-top: 40px; }
+.src a { color: var(--accent); }
+</style>
+
+<main>
+<p class="eyebrow">Claude Code · sessions, subagents, teams, workflows</p>
+<h1>How sessions and agents talk to each other</h1>
+<p class="lede">Every agent runs in its own context window. The only thing that ever crosses the wall between two of them is plain text: a prompt going in, a report or message coming out. The figures below show each channel, what it carries, and where it stops.</p>
+
+<h2>Inside one session</h2>
+<p>Your main conversation can spawn four kinds of workers. In every case the worker's tool calls and intermediate results stay inside the worker. Only the arrow drawn in teal returns to you.</p>
+
+<figure>
+<div class="frame">
+<svg viewBox="0 0 1000 620" role="img" aria-label="The main session spawns subagents, forks, a team and workflow agents. Each worker has its own context window; only a text prompt goes in and only a final report or message comes back.">
+  <defs>
+    <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+    </marker>
+    <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/>
+    </marker>
+  </defs>
+
+  <!-- Main session -->
+  <rect x="30" y="250" width="230" height="130" rx="4" fill="var(--accent-soft)" stroke="currentColor" stroke-width="1.5"/>
+  <text x="145" y="282" text-anchor="middle" font-size="15" font-weight="600" fill="currentColor">Main session</text>
+  <text x="145" y="304" text-anchor="middle" font-size="12" fill="var(--muted)">your context window</text>
+  <text x="145" y="330" text-anchor="middle" font-size="11.5" class="mono" fill="currentColor">sees: final reports only</text>
+  <text x="145" y="348" text-anchor="middle" font-size="11.5" class="mono" fill="currentColor">never sees: their tool calls</text>
+  <text x="145" y="366" text-anchor="middle" font-size="11.5" class="mono" fill="currentColor">plain text out ≠ a message</text>
+
+  <!-- Spine -->
+  <line x1="300" y1="75" x2="300" y2="555" stroke="currentColor" stroke-width="1.5"/>
+  <line x1="260" y1="315" x2="300" y2="315" stroke="currentColor" stroke-width="1.5"/>
+
+  <!-- Row A: Subagent -->
+  <line x1="300" y1="75" x2="560" y2="75" stroke="currentColor" stroke-width="1.5" marker-end="url(#a1)"/>
+  <text x="430" y="68" text-anchor="middle" font-size="11.5" fill="currentColor">task prompt (text)</text>
+  <line x1="560" y1="105" x2="300" y2="105" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#a2)"/>
+  <text x="430" y="122" text-anchor="middle" font-size="11.5" fill="var(--accent)">final report only</text>
+  <line x1="300" y1="135" x2="560" y2="135" stroke="currentColor" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#a1)"/>
+  <text x="430" y="152" text-anchor="middle" font-size="11" fill="var(--muted)">SendMessage by name resumes it</text>
+
+  <rect x="560" y="40" width="200" height="120" rx="4" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/>
+  <text x="660" y="66" text-anchor="middle" font-size="14" font-weight="600" fill="currentColor">Subagent</text>
+  <text x="660" y="86" text-anchor="middle" font-size="12" fill="var(--muted)">fresh, empty context</text>
+  <text x="660" y="106" text-anchor="middle" font-size="11.5" class="mono" fill="currentColor">background by default</text>
+  <text x="660" y="124" text-anchor="middle" font-size="11.5" class="mono" fill="currentColor">keeps its own transcript</text>
+  <text x="660" y="142" text-anchor="middle" font-size="11.5" class="mono" fill="currentColor">20 concurrent · nests 3 deep</text>
+
+  <line x1="760" y1="100" x2="820" y2="100" stroke="currentColor" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#a1)"/>
+  <rect x="820" y="70" width="150" height="60" rx="4" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="5 4"/>
+  <text x="895" y="95" text-anchor="middle" font-size="12" fill="currentColor">its own subagents</text>
+  <text x="895" y="113" text-anchor="middle" font-size="11" fill="var(--muted)">same rules, one level down</text>
+
+  <!-- Row B: Fork -->
+  <line x1="300" y1="205" x2="560" y2="205" stroke="currentColor" stroke-width="1.5" marker-end="url(#a1)"/>
+  <text x="430" y="198" text-anchor="middle" font-size="11.5" fill="currentColor">copy of your whole conversation</text>
+  <line x1="560" y1="235" x2="300" y2="235" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#a2)"/>
+  <text x="430" y="252" text-anchor="middle" font-size="11.5" fill="var(--accent)">final result only</text>
+
+  <rect x="560" y="180" width="200" height="96" rx="4" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/>
+  <text x="660" y="206" text-anchor="middle" font-size="14" font-weight="600" fill="currentColor">Fork</text>
+  <text x="660" y="226" text-anchor="middle" font-size="12" fill="var(--muted)">inherits context, model, tools</text>
+  <text x="660" y="246" text-anchor="middle" font-size="11.5" class="mono" fill="currentColor">shares your prompt cache</text>
+  <text x="660" y="264" text-anchor="middle" font-size="11.5" class="mono" fill="var(--warn)">cannot fork again</text>
+
+  <!-- Row C: Team -->
+  <line x1="300" y1="330" x2="560" y2="330" stroke="currentColor" stroke-width="1.5" marker-end="url(#a1)"/>
+  <text x="430" y="323" text-anchor="middle" font-size="11.5" fill="currentColor">spawn prompt, then named messages</text>
+  <line x1="560" y1="360" x2="300" y2="360" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#a2)"/>
+  <text x="430" y="377" text-anchor="middle" font-size="11.5" fill="var(--accent)">named messages · idle notice with answer</text>
+
+  <rect x="560" y="300" width="200" height="130" rx="4" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/>
+  <text x="660" y="324" text-anchor="middle" font-size="14" font-weight="600" fill="currentColor">Agent team</text>
+  <text x="660" y="342" text-anchor="middle" font-size="11.5" fill="var(--muted)">you are the fixed lead</text>
+  <!-- teammates -->
+  <rect x="580" y="356" width="48" height="26" rx="3" fill="var(--accent-soft)" stroke="currentColor" stroke-width="1"/>
+  <text x="604" y="373" text-anchor="middle" font-size="11" class="mono" fill="currentColor">t1</text>
+  <rect x="636" y="356" width="48" height="26" rx="3" fill="var(--accent-soft)" stroke="currentColor" stroke-width="1"/>
+  <text x="660" y="373" text-anchor="middle" font-size="11" class="mono" fill="currentColor">t2</text>
+  <rect x="692" y="356" width="48" height="26" rx="3" fill="var(--accent-soft)" stroke="currentColor" stroke-width="1"/>
+  <text x="716" y="373" text-anchor="middle" font-size="11" class="mono" fill="currentColor">t3</text>
+  <line x1="628" y1="369" x2="636" y2="369" stroke="currentColor" stroke-width="1.5"/>
+  <line x1="684" y1="369" x2="692" y2="369" stroke="currentColor" stroke-width="1.5"/>
+  <text x="660" y="402" text-anchor="middle" font-size="11" fill="currentColor">any teammate ↔ any teammate, by name</text>
+  <text x="660" y="419" text-anchor="middle" font-size="11" fill="var(--warn)">no broadcast: one message per recipient</text>
+
+  <line x1="760" y1="365" x2="820" y2="365" stroke="currentColor" stroke-width="1.5" marker-start="url(#a1)" marker-end="url(#a1)"/>
+  <rect x="820" y="320" width="150" height="90" rx="4" fill="none" stroke="currentColor" stroke-width="1"/>
+  <text x="895" y="342" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">Files on disk</text>
+  <text x="895" y="360" text-anchor="middle" font-size="11" class="mono" fill="currentColor">~/.claude/tasks/</text>
+  <text x="895" y="376" text-anchor="middle" font-size="11" class="mono" fill="currentColor">~/.claude/teams/…/inboxes</text>
+  <text x="895" y="396" text-anchor="middle" font-size="11" fill="var(--muted)">task claims use file locks</text>
+
+  <!-- Row D: Workflow -->
+  <line x1="300" y1="480" x2="560" y2="480" stroke="currentColor" stroke-width="1.5" marker-end="url(#a1)"/>
+  <text x="430" y="473" text-anchor="middle" font-size="11.5" fill="currentColor">script (JavaScript)</text>
+  <line x1="560" y1="510" x2="300" y2="510" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#a2)"/>
+  <text x="430" y="527" text-anchor="middle" font-size="11.5" fill="var(--accent)">script's return value, at the end</text>
+
+  <rect x="560" y="450" width="410" height="130" rx="4" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/>
+  <text x="600" y="474" font-size="14" font-weight="600" fill="currentColor">Workflow</text>
+  <text x="680" y="474" font-size="11.5" fill="var(--muted)">runtime runs the script; agents never talk to each other</text>
+  <rect x="580" y="490" width="80" height="34" rx="3" fill="var(--accent-soft)" stroke="currentColor" stroke-width="1"/>
+  <text x="620" y="511" text-anchor="middle" font-size="11" class="mono" fill="currentColor">agent()</text>
+  <rect x="680" y="490" width="80" height="34" rx="3" fill="var(--accent-soft)" stroke="currentColor" stroke-width="1"/>
+  <text x="720" y="511" text-anchor="middle" font-size="11" class="mono" fill="currentColor">agent()</text>
+  <rect x="780" y="490" width="80" height="34" rx="3" fill="var(--accent-soft)" stroke="currentColor" stroke-width="1"/>
+  <text x="820" y="511" text-anchor="middle" font-size="11" class="mono" fill="currentColor">agent()</text>
+  <line x1="620" y1="524" x2="620" y2="548" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#a2)"/>
+  <line x1="720" y1="524" x2="720" y2="548" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#a2)"/>
+  <line x1="820" y1="524" x2="820" y2="548" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#a2)"/>
+  <text x="720" y="568" text-anchor="middle" font-size="11.5" class="mono" fill="currentColor">JSON (schema) → script variables, not your context</text>
+  <text x="935" y="511" text-anchor="middle" font-size="11" fill="var(--muted)">16 at once</text>
+  <text x="935" y="527" text-anchor="middle" font-size="11" fill="var(--muted)">1,000 / run</text>
+
+  <!-- Hooks note -->
+  <text x="30" y="440" font-size="12" font-weight="600" fill="currentColor">Side channel: hooks</text>
+  <text x="30" y="458" font-size="11.5" fill="var(--muted)">SubagentStart injects text into the worker's transcript.</text>
+  <text x="30" y="474" font-size="11.5" fill="var(--muted)">SubagentStop can hold it open or add context to you.</text>
+  <text x="30" y="490" font-size="11.5" fill="var(--muted)">Neither delivers a message agent-to-agent.</text>
+
+  <text x="30" y="530" font-size="12" font-weight="600" fill="currentColor">What survives a restart</text>
+  <text x="30" y="548" font-size="11.5" fill="var(--muted)">Subagent transcripts: yes, resumable by ID.</text>
+  <text x="30" y="564" font-size="11.5" fill="var(--muted)">Teammates: no. The task list on disk: yes.</text>
+  <text x="30" y="580" font-size="11.5" fill="var(--muted)">Workflow results: replayed within the same session.</text>
+</svg>
+</div>
+<div class="legend">
+  <span><i></i> goes in: plain text</span>
+  <span><i class="ret"></i> comes back to you</span>
+  <span><i class="dash"></i> optional, by name</span>
+</div>
+<figcaption>Figure 1. Four ways one session delegates work. The worker's context window is a wall. A subagent starts empty, a fork starts as a copy of you, a team is many named peers, a workflow is a script that collects structured answers. In every case you receive text at the end, not the work in progress.</figcaption>
+</figure>
+
+<h2>Between sessions</h2>
+<p>Separate Claude Code sessions can message each other too. The route depends on where the other session runs, and the route decides whether an answer can come back.</p>
+
+<figure>
+<div class="frame">
+<svg viewBox="0 0 1000 520" role="img" aria-label="This session messages another local session directly over a socket, two-way. Messages to sessions on other machines and cloud sessions pass through Anthropic servers; a cloud session cannot send a reply. A Claude Project receives one confirmed message.">
+  <defs>
+    <marker id="b1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+    </marker>
+    <marker id="b2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/>
+    </marker>
+  </defs>
+
+  <!-- This session -->
+  <rect x="30" y="190" width="210" height="140" rx="4" fill="var(--accent-soft)" stroke="currentColor" stroke-width="1.5"/>
+  <text x="135" y="220" text-anchor="middle" font-size="15" font-weight="600" fill="currentColor">This session</text>
+  <text x="135" y="242" text-anchor="middle" font-size="12" fill="var(--muted)">ListAgents finds targets</text>
+  <text x="135" y="266" text-anchor="middle" font-size="11.5" class="mono" fill="currentColor">a subagent sends under</text>
+  <text x="135" y="282" text-anchor="middle" font-size="11.5" class="mono" fill="currentColor">the parent's address;</text>
+  <text x="135" y="298" text-anchor="middle" font-size="11.5" class="mono" fill="currentColor">replies land in the parent</text>
+  <text x="135" y="318" text-anchor="middle" font-size="11" fill="var(--muted)">inbound: accept · hold · refuse</text>
+
+  <line x1="240" y1="260" x2="280" y2="260" stroke="currentColor" stroke-width="1.5"/>
+  <line x1="280" y1="70" x2="280" y2="455" stroke="currentColor" stroke-width="1.5"/>
+
+  <!-- Row 1: local session, direct -->
+  <line x1="280" y1="70" x2="700" y2="70" stroke="currentColor" stroke-width="1.5" marker-end="url(#b1)"/>
+  <text x="490" y="63" text-anchor="middle" font-size="11.5" fill="currentColor">per-session socket on this machine, never leaves it</text>
+  <line x1="700" y1="100" x2="280" y2="100" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#b2)"/>
+  <text x="490" y="117" text-anchor="middle" font-size="11.5" fill="var(--accent)">reply · delivery notice · one-shot idle notice</text>
+
+  <rect x="700" y="40" width="270" height="96" rx="4" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/>
+  <text x="835" y="66" text-anchor="middle" font-size="14" font-weight="600" fill="currentColor">Another local session</text>
+  <text x="835" y="86" text-anchor="middle" font-size="12" fill="var(--muted)">same machine, two-way</text>
+  <text x="835" y="106" text-anchor="middle" font-size="11.5" class="mono" fill="currentColor">≈1M chars · 50 queued · 100 held</text>
+  <text x="835" y="124" text-anchor="middle" font-size="11.5" class="mono" fill="currentColor">different permission mode → held</text>
+
+  <!-- Relay box -->
+  <rect x="430" y="180" width="130" height="190" rx="4" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="5 4"/>
+  <text x="495" y="205" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">Anthropic servers</text>
+  <text x="495" y="223" text-anchor="middle" font-size="11" fill="var(--muted)">needs claude.ai sign-in</text>
+  <text x="495" y="239" text-anchor="middle" font-size="11" fill="var(--muted)">API key / Bedrock /</text>
+  <text x="495" y="254" text-anchor="middle" font-size="11" fill="var(--muted)">Vertex can't see these</text>
+  <text x="495" y="340" text-anchor="middle" font-size="11" fill="var(--warn)">nothing reports delivery</text>
+  <text x="495" y="356" text-anchor="middle" font-size="11" fill="var(--warn)">silence ≠ agreement</text>
+
+  <!-- Row 2: other machine / remote control -->
+  <line x1="280" y1="215" x2="430" y2="215" stroke="currentColor" stroke-width="1.5"/>
+  <line x1="560" y1="215" x2="700" y2="215" stroke="currentColor" stroke-width="1.5" marker-end="url(#b1)"/>
+  <line x1="700" y1="245" x2="560" y2="245" stroke="var(--accent)" stroke-width="1.5"/>
+  <line x1="430" y1="245" x2="280" y2="245" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#b2)"/>
+  <text x="630" y="208" text-anchor="middle" font-size="11.5" fill="currentColor">message</text>
+  <text x="630" y="262" text-anchor="middle" font-size="11.5" fill="var(--accent)">it can reply</text>
+
+  <rect x="700" y="185" width="270" height="80" rx="4" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/>
+  <text x="835" y="211" text-anchor="middle" font-size="14" font-weight="600" fill="currentColor">Session on another machine</text>
+  <text x="835" y="231" text-anchor="middle" font-size="12" fill="var(--muted)">visible once Remote Control is on</text>
+  <text x="835" y="251" text-anchor="middle" font-size="11.5" class="mono" fill="currentColor">also: Claude Desktop sessions</text>
+
+  <!-- Row 3: cloud session -->
+  <line x1="280" y1="300" x2="430" y2="300" stroke="currentColor" stroke-width="1.5"/>
+  <line x1="560" y1="300" x2="700" y2="300" stroke="currentColor" stroke-width="1.5" marker-end="url(#b1)"/>
+  <text x="630" y="293" text-anchor="middle" font-size="11.5" fill="currentColor">message</text>
+  <line x1="700" y1="330" x2="580" y2="330" stroke="var(--warn)" stroke-width="1.5" stroke-dasharray="2 4"/>
+  <line x1="574" y1="322" x2="586" y2="338" stroke="var(--warn)" stroke-width="2"/>
+  <line x1="586" y1="322" x2="574" y2="338" stroke="var(--warn)" stroke-width="2"/>
+  <text x="640" y="347" text-anchor="middle" font-size="11.5" fill="var(--warn)">no SendMessage back</text>
+
+  <rect x="700" y="275" width="270" height="96" rx="4" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/>
+  <text x="835" y="301" text-anchor="middle" font-size="14" font-weight="600" fill="currentColor">Cloud session</text>
+  <text x="835" y="321" text-anchor="middle" font-size="12" fill="var(--muted)">claude.ai/code</text>
+  <text x="835" y="341" text-anchor="middle" font-size="11.5" class="mono" fill="currentColor">it receives and acts</text>
+  <text x="835" y="359" text-anchor="middle" font-size="11.5" class="mono" fill="currentColor">you read its answer in its transcript</text>
+
+  <!-- Row 4: project -->
+  <line x1="280" y1="430" x2="700" y2="430" stroke="currentColor" stroke-width="1.5" marker-end="url(#b1)"/>
+  <text x="490" y="423" text-anchor="middle" font-size="11.5" fill="currentColor">one message, only in the turn you ran /send-to-project</text>
+  <text x="490" y="447" text-anchor="middle" font-size="11" fill="var(--muted)">carries this session's Remote Control id so the project can read it back</text>
+
+  <rect x="700" y="400" width="270" height="80" rx="4" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/>
+  <text x="835" y="426" text-anchor="middle" font-size="14" font-weight="600" fill="currentColor">Claude Project</text>
+  <text x="835" y="446" text-anchor="middle" font-size="12" fill="var(--muted)">coordinator + cloud threads</text>
+  <text x="835" y="466" text-anchor="middle" font-size="11.5" class="mono" fill="currentColor">user confirms before it sends</text>
+
+  <!-- message content note -->
+  <text x="30" y="380" font-size="12" font-weight="600" fill="currentColor">What a cross-session message is</text>
+  <text x="30" y="398" font-size="11.5" fill="var(--muted)">Plain text, read literally. Slash commands</text>
+  <text x="30" y="414" font-size="11.5" fill="var(--muted)">arrive as words. @file attaches nothing.</text>
+  <text x="30" y="430" font-size="11.5" fill="var(--muted)">It cannot approve a permission or change</text>
+  <text x="30" y="446" font-size="11.5" fill="var(--muted)">any config. Receiving one costs a prompt.</text>
+</svg>
+</div>
+<div class="legend">
+  <span><i></i> message out</span>
+  <span><i class="ret"></i> can come back</span>
+  <span><i class="stop"></i> cannot come back</span>
+</div>
+<figcaption>Figure 2. Three routes between sessions and one into a Project. The local socket is the only route with delivery feedback. Through Anthropic servers a session on another machine can answer, a cloud session cannot. Every message is plain text and never carries permissions.</figcaption>
+</figure>
+
+<h2>Every channel at a glance</h2>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Channel</th><th>Direction</th><th>What crosses</th><th>Shared context?</th><th>Lives on after</th><th>Hard limits</th></tr></thead>
+<tbody>
+<tr><td>Subagent</td><td>parent → child, child → parent once</td><td>prompt in; final report out; later messages by name</td><td>No. Starts empty (gets CLAUDE.md, git status, skills)</td><td>Transcript kept, resumable by ID</td><td>20 concurrent by default; 3 levels of nesting; no AskUserQuestion or Workflow inside</td></tr>
+<tr><td>Fork</td><td>parent → copy, copy → parent once</td><td>whole conversation in; final result out</td><td>Yes, a snapshot at spawn time; diverges after</td><td>Same as a subagent</td><td>A fork cannot fork; always your model and effort</td></tr>
+<tr><td>Agent team</td><td>lead ↔ teammate, teammate ↔ teammate</td><td>named text messages; shared task list; idle notices</td><td>No. Each teammate has its own window</td><td>Task list on disk; teammates do not survive /resume</td><td>Interactive sessions only; one team per session; no nested teams; no broadcast; about 7x tokens in plan mode</td></tr>
+<tr><td>Workflow</td><td>script → agents, agents → script</td><td>prompt in; JSON matching a schema out, into script variables</td><td>No. Agents do not see each other</td><td>Results replay on resume in the same session</td><td>16 concurrent by default; 1,000 agents per run; 4,096 items per parallel call; no user input mid-run</td></tr>
+<tr><td>Local session</td><td>two-way</td><td>plain text over a per-session socket</td><td>No</td><td>Queued until the receiver's next tool round</td><td>About 1M characters; 50 queued; 100 held; rapid bursts refused; loops throttled</td></tr>
+<tr><td>Other machine</td><td>two-way, via Anthropic servers</td><td>plain text</td><td>No</td><td>Same</td><td>Needs claude.ai sign-in and Remote Control; no delivery report</td></tr>
+<tr><td>Cloud session</td><td>one-way in</td><td>plain text</td><td>No</td><td>Same</td><td><span class="nope">Cannot SendMessage back.</span> Read its transcript instead</td></tr>
+<tr><td>Claude Project</td><td>one message in</td><td>text plus this session's Remote Control id</td><td>No. The project can read the session itself</td><td>Posted in the project as you</td><td>Only in the /send-to-project turn; user confirms every send</td></tr>
+<tr><td>Hooks</td><td>harness → agent</td><td>injected context; block or hold a stop</td><td>Writes into one transcript</td><td>n/a</td><td>Not agent-to-agent; Notification cannot block</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2>What never crosses a boundary</h2>
+<ul>
+  <li><strong>Plain text output.</strong> An agent's ordinary reply is seen by its user, not by other agents. Reaching another agent always means calling SendMessage.</li>
+  <li><strong>Tool calls and intermediate results.</strong> They stay inside the context window that made them. You get the report, not the trail.</li>
+  <li><strong>Permissions.</strong> Each session decides for itself. A message cannot approve a prompt, and asking a peer to do what your session was denied is permission laundering.</li>
+  <li><strong>Attachments and commands.</strong> An <code>@path</code> in a message attaches nothing on the far side. A slash command arrives as words.</li>
+  <li><strong>Configuration.</strong> No message changes settings, CLAUDE.md, or memory on the receiving side.</li>
+</ul>
+
+<h2>A conduit for many sessions</h2>
+<p>The channels above are ephemeral, text-only and blind to each other. A small daemon layer can be the team infrastructure a single technician lacks: the board, the lock, the reviewer and the build. It works only if it stays a substrate the agents write to, with hooks as the gates. It never decides anything itself.</p>
+
+<figure>
+<div class="frame">
+<svg viewBox="0 0 1000 560" role="img" aria-label="Local agents write claims, notes and completions into a ledger daemon over a small CLI. Hook gates ask the daemon for a lease before any edit and require a report before any agent stops. A cloud session reaches the ledger only by pushing a branch that a remote bridge polls. Subscribers such as a notifier, dashboard and test runner read the daemon's event bus.">
+  <defs>
+    <marker id="c1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+    </marker>
+    <marker id="c2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/>
+    </marker>
+  </defs>
+
+  <!-- Row 1: agents -->
+  <rect x="70" y="30" width="170" height="62" rx="4" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/>
+  <text x="155" y="56" text-anchor="middle" font-size="13.5" font-weight="600" fill="currentColor">Main session</text>
+  <text x="155" y="76" text-anchor="middle" font-size="11" fill="var(--muted)">stateless, as before</text>
+  <rect x="300" y="30" width="170" height="62" rx="4" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/>
+  <text x="385" y="56" text-anchor="middle" font-size="13.5" font-weight="600" fill="currentColor">Subagent</text>
+  <text x="385" y="76" text-anchor="middle" font-size="11" fill="var(--muted)">any depth</text>
+  <rect x="530" y="30" width="170" height="62" rx="4" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/>
+  <text x="615" y="56" text-anchor="middle" font-size="13.5" font-weight="600" fill="currentColor">Teammate / peer</text>
+  <text x="615" y="76" text-anchor="middle" font-size="11" fill="var(--muted)">other local session too</text>
+  <rect x="760" y="30" width="170" height="62" rx="4" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/>
+  <text x="845" y="56" text-anchor="middle" font-size="13.5" font-weight="600" fill="currentColor">Cloud session</text>
+  <text x="845" y="76" text-anchor="middle" font-size="11" fill="var(--muted)">cannot reach the socket</text>
+
+  <!-- Bus into daemon -->
+  <line x1="155" y1="92" x2="155" y2="140" stroke="currentColor" stroke-width="1.5"/>
+  <line x1="385" y1="92" x2="385" y2="140" stroke="currentColor" stroke-width="1.5"/>
+  <line x1="615" y1="92" x2="615" y2="140" stroke="currentColor" stroke-width="1.5"/>
+  <line x1="155" y1="140" x2="615" y2="140" stroke="currentColor" stroke-width="1.5"/>
+  <line x1="500" y1="140" x2="500" y2="220" stroke="currentColor" stroke-width="1.5" marker-end="url(#c1)"/>
+  <text x="385" y="160" text-anchor="middle" font-size="11.5" class="mono" fill="currentColor">claim · release · note · done · ask</text>
+  <text x="385" y="176" text-anchor="middle" font-size="11" fill="var(--muted)">one small CLI, also served as an MCP tool</text>
+
+  <!-- Cloud path -->
+  <line x1="845" y1="92" x2="845" y2="220" stroke="currentColor" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#c1)"/>
+  <text x="860" y="150" font-size="11.5" fill="currentColor">git push</text>
+  <text x="860" y="166" font-size="11" fill="var(--muted)">to a branch</text>
+
+  <!-- Row 2: gates, daemon, bridge -->
+  <rect x="40" y="220" width="270" height="130" rx="4" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/>
+  <text x="175" y="244" text-anchor="middle" font-size="13.5" font-weight="600" fill="currentColor">Hook gates</text>
+  <text x="175" y="261" text-anchor="middle" font-size="11" fill="var(--muted)">the only thing that can block an agent</text>
+  <text x="56" y="284" font-size="11" class="mono" fill="currentColor">PreToolUse Edit  → holds a lease?</text>
+  <text x="56" y="302" font-size="11" class="mono" fill="currentColor">SubagentStop     → report filed?</text>
+  <text x="56" y="320" font-size="11" class="mono" fill="currentColor">Stop             → handoff note?</text>
+  <text x="56" y="338" font-size="11" class="mono" fill="currentColor">TaskCompleted    → tests green?</text>
+
+  <rect x="370" y="220" width="260" height="130" rx="4" fill="var(--accent-soft)" stroke="currentColor" stroke-width="1.5"/>
+  <text x="500" y="244" text-anchor="middle" font-size="14" font-weight="600" fill="currentColor">Ledger daemon</text>
+  <text x="500" y="261" text-anchor="middle" font-size="11" fill="var(--muted)">one process, Unix socket</text>
+  <text x="500" y="284" text-anchor="middle" font-size="11.5" class="mono" fill="currentColor">SQLite · append-only events</text>
+  <text x="500" y="302" text-anchor="middle" font-size="11.5" class="mono" fill="currentColor">leases on paths, with expiry</text>
+  <text x="500" y="320" text-anchor="middle" font-size="11.5" class="mono" fill="currentColor">watches worktrees for overlap</text>
+  <text x="500" y="338" text-anchor="middle" font-size="11.5" fill="var(--warn)">records and answers, never decides</text>
+
+  <line x1="310" y1="275" x2="370" y2="275" stroke="currentColor" stroke-width="1.5" marker-end="url(#c1)"/>
+  <line x1="370" y1="300" x2="310" y2="300" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#c2)"/>
+  <text x="340" y="268" text-anchor="middle" font-size="10.5" fill="currentColor">ask</text>
+  <text x="340" y="316" text-anchor="middle" font-size="10.5" fill="var(--accent)">ok / deny</text>
+
+  <rect x="720" y="220" width="250" height="130" rx="4" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/>
+  <text x="845" y="244" text-anchor="middle" font-size="13.5" font-weight="600" fill="currentColor">Remote bridge</text>
+  <text x="845" y="261" text-anchor="middle" font-size="11" fill="var(--muted)">the inbox for one-way routes</text>
+  <text x="845" y="284" text-anchor="middle" font-size="11.5" class="mono" fill="currentColor">git fetch loop</text>
+  <text x="845" y="302" text-anchor="middle" font-size="11.5" class="mono" fill="currentColor">routine + webhook runs</text>
+  <text x="845" y="320" text-anchor="middle" font-size="11.5" class="mono" fill="currentColor">records what landed</text>
+
+  <line x1="720" y1="285" x2="630" y2="285" stroke="currentColor" stroke-width="1.5" marker-end="url(#c1)"/>
+  <text x="675" y="278" text-anchor="middle" font-size="10.5" fill="currentColor">events</text>
+
+  <!-- Gates to working trees -->
+  <line x1="175" y1="350" x2="175" y2="420" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#c2)"/>
+  <text x="190" y="390" font-size="11" fill="var(--accent)">allowed edit</text>
+  <rect x="40" y="420" width="270" height="90" rx="4" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/>
+  <text x="175" y="444" text-anchor="middle" font-size="13.5" font-weight="600" fill="currentColor">Working trees</text>
+  <text x="175" y="464" text-anchor="middle" font-size="11.5" class="mono" fill="currentColor">wt/feature-a · wt/feature-b · wt/fix-c</text>
+  <text x="175" y="482" text-anchor="middle" font-size="11" fill="var(--muted)">one per workstream; crossover becomes a merge,</text>
+  <text x="175" y="498" text-anchor="middle" font-size="11" fill="var(--muted)">not an overwrite</text>
+
+  <!-- Event bus and subscribers -->
+  <line x1="500" y1="350" x2="500" y2="390" stroke="currentColor" stroke-width="1.5"/>
+  <line x1="440" y1="390" x2="890" y2="390" stroke="currentColor" stroke-width="1.5"/>
+  <text x="670" y="382" text-anchor="middle" font-size="11" fill="var(--muted)">event bus: subscribe, never call each other</text>
+  <line x1="440" y1="390" x2="440" y2="420" stroke="currentColor" stroke-width="1.5" marker-end="url(#c1)"/>
+  <line x1="665" y1="390" x2="665" y2="420" stroke="currentColor" stroke-width="1.5" marker-end="url(#c1)"/>
+  <line x1="890" y1="390" x2="890" y2="420" stroke="currentColor" stroke-width="1.5" marker-end="url(#c1)"/>
+
+  <rect x="360" y="420" width="160" height="90" rx="4" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/>
+  <text x="440" y="444" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Notifier</text>
+  <text x="440" y="464" text-anchor="middle" font-size="11" fill="var(--muted)">desktop toast when a</text>
+  <text x="440" y="480" text-anchor="middle" font-size="11" fill="var(--muted)">gate denies, a report</text>
+  <text x="440" y="496" text-anchor="middle" font-size="11" fill="var(--muted)">lands, a branch arrives</text>
+
+  <rect x="585" y="420" width="160" height="90" rx="4" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/>
+  <text x="665" y="444" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Dashboard</text>
+  <text x="665" y="464" text-anchor="middle" font-size="11" fill="var(--muted)">who holds what, what</text>
+  <text x="665" y="480" text-anchor="middle" font-size="11" fill="var(--muted)">is open, last handoff</text>
+  <text x="665" y="496" text-anchor="middle" font-size="11" fill="var(--muted)">per workstream</text>
+
+  <rect x="810" y="420" width="160" height="90" rx="4" fill="var(--surface)" stroke="currentColor" stroke-width="1.5"/>
+  <text x="890" y="444" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Test runner</text>
+  <text x="890" y="464" text-anchor="middle" font-size="11" fill="var(--muted)">runs on task done or</text>
+  <text x="890" y="480" text-anchor="middle" font-size="11" fill="var(--muted)">branch arrival, writes</text>
+  <text x="890" y="496" text-anchor="middle" font-size="11" fill="var(--muted)">the result back as an event</text>
+
+  <text x="500" y="545" text-anchor="middle" font-size="11" fill="var(--muted)">Agents stay stateless. The ledger holds the truth. The gates enforce it. Everything else subscribes.</text>
+</svg>
+</div>
+<div class="legend">
+  <span><i></i> writes or asks</span>
+  <span><i class="ret"></i> answer, or an edit let through</span>
+  <span><i class="dash"></i> indirect route</span>
+</div>
+<figcaption>Figure 3. The conduit. Every agent, local or remote, ends up writing into one append-only ledger. Hooks consult it before an edit and before a stop, which is the only place an agent can actually be held. Worktrees turn file crossover into merges. Everything downstream is a subscriber on the daemon's event bus, so new pieces plug in without touching the core.</figcaption>
+</figure>
+
+<h2>The smallest set of parts</h2>
+<ul>
+  <li><strong>One binary.</strong> <code>ledgerd</code> owns a SQLite file under your state directory and listens on a Unix socket. Subcommands: claim, release, note, done, ask, events. The same binary runs in MCP stdio mode so any session can call it as a tool.</li>
+  <li><strong>Four hook scripts.</strong> A lease check on PreToolUse for Edit and Write, a report check on SubagentStop, a handoff check on Stop, a test gate on TaskCompleted. Each is a few lines that call the CLI and exit 2 to deny.</li>
+  <li><strong>One CLAUDE.md stanza.</strong> Claim before you edit, note before you stop, ask when you are unsure who owns a path. Hooks enforce it when the stanza is ignored.</li>
+  <li><strong>Worktree by default.</strong> Spawn parallel work with worktree isolation so every workstream has its own checkout. The daemon watches them and flags two trees touching the same path.</li>
+  <li><strong>Subscribers as you need them.</strong> A notifier is a loop over the event stream piped to the desktop. The dashboard and test runner come later and change nothing upstream.</li>
+</ul>
+<p><strong>Rules that keep it simple.</strong> Leases expire, so a dead agent cannot wedge the repo. The lease check is local and sub-millisecond, since it runs on every edit. The daemon records and answers and never coordinates, because a daemon that decides is one more context window you cannot see into.</p>
+
+<p class="src">Sources: Claude Code docs on <a href="https://code.claude.com/docs/en/sub-agents">subagents</a>, <a href="https://code.claude.com/docs/en/agent-teams">agent teams</a>, <a href="https://code.claude.com/docs/en/cross-session-messaging">cross-session messaging</a>, <a href="https://code.claude.com/docs/en/workflows">workflows</a>, <a href="https://code.claude.com/docs/en/hooks">hooks</a>, <a href="https://code.claude.com/docs/en/sessions">sessions</a> and <a href="https://code.claude.com/docs/en/claude-projects">projects</a>, plus the tool definitions available in this session. Agent teams are experimental; the Project channel is described only by its tool, not by a docs page. Checked 2026-11-10.</p>
+</main>
