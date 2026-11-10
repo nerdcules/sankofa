@@ -171,6 +171,52 @@ public sealed class StoreTests : IDisposable
     }
 
     [Fact]
+    public void A_subagent_inherits_only_its_own_parents_lease()
+    {
+        var main = store.Claim(repo, "src/a.c", "s1", "main", 600);
+        Assert.False(store.Claim(repo, "src/a.c", "s1", "subagent:x/1", 600).Granted);      // no inherit asked
+        Advance(3);
+        Assert.False(store.Claim(repo, "src/a.c", "s1", "subagent:x/1", 600, inherit: true).Granted); // parent may be mid-edit
+        store.Claim(repo, "src/a.c", "s1", "main", 600);                                      // parent edits again: renew
+        Advance(4);
+        Assert.False(store.Claim(repo, "src/a.c", "s1", "subagent:x/1", 600, inherit: true).Granted); // idle counts from the renew
+        Advance(2);
+        var sub = store.Claim(repo, "src/a.c", "s1", "subagent:x/1", 600, inherit: true);
+        Assert.True(sub.Granted);
+        Assert.Contains(FileEntries(), e => e.Type == "release" && e.Ref == main.Lease!.Id && e.Text.Contains("handed from main"));
+        Assert.False(store.Claim(repo, "src/a.c", "s1", "main", 600, inherit: true).Granted);   // the parent waits
+        Assert.False(store.Claim(repo, "src/a.c", "s1", "subagent:x/2", 600, inherit: true).Granted); // a sibling waits
+        store.Claim(repo, "src/b.c", "s2", "main", 600);
+        Advance(10);
+        Assert.False(store.Claim(repo, "src/b.c", "s1", "subagent:x/1", 600, inherit: true).Granted); // another session's
+    }
+
+    [Fact]
+    public void Check_reports_paths_held_by_others_and_changes_nothing()
+    {
+        store.Claim(repo, "src/**", "s1", "main", 600);
+        store.Claim(repo, "docs/a.md", "s2", "main", 600);
+        int before = FileEntries().Count;
+        var hits = store.Check(repo, ["src/x.c", "docs/a.md", "README.md"], "s2", "main");
+        Assert.Equal(("src/x.c", "src/**"), (Assert.Single(hits).Path, hits[0].Lease.Glob));
+        Assert.Empty(store.Check(repo, ["src/x.c"], "s1", "main"));
+        Assert.Equal(before, FileEntries().Count);
+    }
+
+    [Fact]
+    public void Finish_ends_one_agents_leases_or_the_whole_sessions()
+    {
+        store.Claim(repo, "a", "s1", "main", 600);
+        store.Claim(repo, "b", "s1", "subagent:x/1", 600);
+        store.Claim(repo, "c", "s1", "subagent:x/2", 600);
+        store.Claim(repo, "d", "s2", "main", 600);
+        Assert.Equal("b", Assert.Single(store.Finish(repo, "s1", "subagent:x/1", "subagent finished")).Glob);
+        Assert.Equal(["a", "c"], store.Finish(repo, "s1", null, "session ended").Select(e => e.Glob).Order());
+        Assert.Equal("d", Assert.Single(store.Leases(repo)).Glob);
+        Assert.All(FileEntries().Where(e => e.Type == "done"), e => Assert.NotNull(e.Ref));
+    }
+
+    [Fact]
     public void Each_event_is_raised_once_with_a_rising_sequence()
     {
         var seen = new List<Entry>();

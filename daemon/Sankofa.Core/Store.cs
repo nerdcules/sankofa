@@ -55,7 +55,11 @@ public sealed class Store : IDisposable
               PRIMARY KEY(repo, id));
             CREATE TABLE IF NOT EXISTS repos(repo TEXT PRIMARY KEY, size INTEGER NOT NULL, count INTEGER NOT NULL);
             """);
+        // 0.4: when a lease was last claimed or renewed (databases from 0.3 lack the column)
+        try { db.Exec("ALTER TABLE leases ADD COLUMN touched TEXT"); } catch (SqliteException) { }
     }
+
+    public const long DefaultHandoverIdleSeconds = 5;
 
     public void Dispose() { lock (gate) db.Dispose(); }
 
@@ -118,7 +122,12 @@ public sealed class Store : IDisposable
     /// Ask for a lease on a glob. Granted unless another holder has a live lease that overlaps.
     /// The same holder claiming the same glob renews it. Either way the answer is recorded.
     /// </summary>
-    public ClaimResult Claim(string repo, string glob, string? session, string? agent, long? ttlSeconds = null, string? wt = null)
+    /// <param name="inherit">A subagent may take over leases its own session's main agent holds
+    /// (the parent delegated the work), but only ones the parent has not claimed or renewed for
+    /// <paramref name="idleSeconds"/>: handing over a file mid-edit would clobber the parent's edit.
+    /// The parent's lease is released with a note saying so.</param>
+    public ClaimResult Claim(string repo, string glob, string? session, string? agent, long? ttlSeconds = null,
+                             string? wt = null, bool inherit = false, long? idleSeconds = null)
     {
         session ??= "-"; agent ??= "main";
         glob = Glob.Normalize(glob);
@@ -140,6 +149,18 @@ public sealed class Store : IDisposable
                 return new(true, true, ev, GetLease(repo, mine.Id), [], []);
             }
             var conflicts = held.Where(l => (l.Session != session || l.Agent != agent) && Glob.Overlap(l.Glob, glob)).ToList();
+            var idleBefore = Ts(clock().AddSeconds(-(idleSeconds is >= 0 ? idleSeconds.Value : DefaultHandoverIdleSeconds)));
+            if (inherit && agent != "main" && conflicts.Count > 0 &&
+                conflicts.All(c => c.Session == session && c.Agent == "main" && string.CompareOrdinal(Touched(repo, c.Id), idleBefore) <= 0))
+            {
+                foreach (var c in conflicts)
+                    AppendLocked(repo, new Entry
+                    {
+                        Type = "release", Ref = c.Id, Glob = c.Glob, Session = session, Agent = agent,
+                        Text = $"release {c.Glob}: handed from main to {agent} of the same session",
+                    });
+                conflicts.Clear();
+            }
             if (conflicts.Count > 0)
             {
                 var ev = AppendLocked(repo, new Entry
@@ -175,6 +196,41 @@ public sealed class Store : IDisposable
                 Type = "release", Text = $"release {l.Glob}", Ref = id, Glob = l.Glob,
                 Session = session ?? "-", Agent = agent ?? "main",
             });
+        }
+    }
+
+    /// <summary>Which of these paths are held by someone other than this holder? Read-only (the commit gate).</summary>
+    public List<(string Path, Lease Lease)> Check(string repo, IEnumerable<string> paths, string? session, string? agent)
+    {
+        session ??= "-"; agent ??= "main";
+        lock (gate)
+        {
+            repo = RepoKey(repo);
+            SyncLocked(repo); ExpireDue(repo);
+            var held = Leases(repo, "state='held'").Where(l => l.Session != session || l.Agent != agent).ToList();
+            var hits = new List<(string, Lease)>();
+            foreach (var raw in paths)
+            {
+                var p = Glob.Normalize(raw);
+                foreach (var l in held) if (Glob.Match(l.Glob, p)) hits.Add((p, l));
+            }
+            return hits;
+        }
+    }
+
+    /// <summary>Finish every live lease of a holder (agent null: every agent of the session).</summary>
+    public List<Entry> Finish(string repo, string session, string? agent, string text)
+    {
+        lock (gate)
+        {
+            repo = RepoKey(repo);
+            SyncLocked(repo); ExpireDue(repo);
+            var mine = Leases(repo, "state='held' AND session=?", session).Where(l => agent is null || l.Agent == agent).ToList();
+            return mine.Select(l => AppendLocked(repo, new Entry
+            {
+                Type = "done", Ref = l.Id, Glob = l.Glob, Session = session, Agent = agent ?? l.Agent,
+                Text = $"{text}: {l.Glob}",
+            })).ToList();
         }
     }
 
@@ -372,11 +428,11 @@ public sealed class Store : IDisposable
         switch (e.Type)
         {
             case "claim" when e.Glob is not null && e.Expires is not null:
-                db.Run("INSERT OR REPLACE INTO leases(repo,id,glob,session,agent,claimed,expires,dirty,state) VALUES(?,?,?,?,?,?,?,1,'held')",
-                       repo, e.Id, e.Glob, e.Session, e.Agent, e.Ts, e.Expires);
+                db.Run("INSERT OR REPLACE INTO leases(repo,id,glob,session,agent,claimed,expires,dirty,state,touched) VALUES(?,?,?,?,?,?,?,1,'held',?)",
+                       repo, e.Id, e.Glob, e.Session, e.Agent, e.Ts, e.Expires, e.Ts);
                 break;
             case "renew" when e.Ref is not null && e.Expires is not null:
-                db.Run("UPDATE leases SET expires=? WHERE repo=? AND id=? AND state='held'", e.Expires, repo, e.Ref);
+                db.Run("UPDATE leases SET expires=?, touched=? WHERE repo=? AND id=? AND state='held'", e.Expires, e.Ts, repo, e.Ref);
                 break;
             case "release" when e.Ref is not null:
                 db.Run("UPDATE leases SET state='released' WHERE repo=? AND id=? AND state IN ('held','expired')", repo, e.Ref);
@@ -404,6 +460,9 @@ public sealed class Store : IDisposable
                        (l.Dirty ? "; its paths may hold a half-finished edit" : ""),
             });
     }
+
+    string Touched(string repo, string id) =>
+        db.Scalar("SELECT COALESCE(touched, claimed) FROM leases WHERE repo=? AND id=?", repo, id) as string ?? "";
 
     Entry? Get(string repo, string id) =>
         Rows($"SELECT {Cols} FROM events WHERE repo=? AND id=?", repo, id).FirstOrDefault();

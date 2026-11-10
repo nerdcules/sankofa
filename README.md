@@ -32,8 +32,10 @@ sankofad ── SQLite, append-only events, leases with expiry
 
 ## Status
 
-Iteration 0.3: shell ledger, Stop hooks, desktop toasts for items that need
-you, and `sankofad`, a daemon with an SQLite event log and path leases. See `docs/ROADMAP.md` for what comes next. Each iteration ships with
+Iteration 0.4: shell ledger, Stop hooks, desktop toasts for items that need
+you, `sankofad` (an SQLite event log and path leases), and the gates: every
+edit is leased before it happens, and git refuses commits on someone else's
+paths. See `docs/ROADMAP.md` for what comes next. Each iteration ships with
 tests, and its usage gate is run as an accelerated simulation (`sim/`) against
 the real code before the next starts.
 
@@ -41,11 +43,12 @@ the real code before the next starts.
 
 ```sh
 ./install.sh            # builds sankofad if needed, links ~/.local/bin/sankofa{,d,-watch},
-                        # adds Stop + SubagentStop hooks, enables the sankofad and
-                        # sankofa-watch systemd user services
+                        # adds the Stop, SubagentStop, SessionEnd and edit-gate hooks,
+                        # enables the sankofad and sankofa-watch systemd user services
 cd ~/Work/some-repo
 sankofa init            # creates .sankofa/ (add it to .gitignore or commit it, your call)
 sankofa watch add       # toast this repo's awaiting items on the desktop
+sankofa gate install    # git pre-commit gate for this repo
 sankofa todo "write the PKGBUILD"
 sankofa awaiting "sudo pacman -U the built package"
 sankofa open
@@ -94,12 +97,39 @@ half-finished. Two holders conflict when their globs can match a common path;
 a session and its subagent are different holders. `sankofa events --follow`
 streams every event as it happens, which is how later parts will subscribe.
 
+## Gates
+
+Gates are the only enforcement, and they live at the client edge; the daemon
+only records and answers.
+
+- **Edit gate** (`sankofad gate claude-code`, a Claude Code `PreToolUse` hook
+  on Edit, Write, MultiEdit and NotebookEdit). Each edit claims the file for
+  the session, or for the subagent by its `agent_id`. When another holder has
+  it, the edit is denied with the holder's name. A subagent may take over a file
+  its own parent session holds once the parent has not edited it for
+  `handover_idle` (default 5s; handing over mid-edit clobbered the parent's
+  edit in `sim/gates.py`); the parent then waits for the subagent. The
+  subagent's leases end at SubagentStop, the session's at SessionEnd, and
+  anything abandoned expires (`lease_ttl` in `.sankofa/config`, default 30m).
+  If the daemon does not answer within 50 ms the edit goes ahead and one
+  `flag` is written to the ledger, which the daemon imports when it is back.
+  About 4 ms per edit.
+- **Codex** (`sankofad gate codex`): the same gate for `apply_patch`; see
+  `hooks/codex/README.md`.
+- **Commit gate** (`sankofa gate install`): a git pre-commit hook that refuses
+  staged paths someone else holds, and refuses when the daemon is down. It is
+  the floor for every client, hooks or not. Override once with
+  `SANKOFA_GATE=0` or `git commit --no-verify`.
+
+Turn the gates off for a repo with `gate=0` in `.sankofa/config`.
+
 ## Simulations
 
 ```sh
 python3 sim/week.py     # Stop rule: blocks, nags, missed handoffs per simulated week
 python3 sim/notify.py   # notifier: exactly-once delivery, latency, toasts per day
 python3 sim/daemon.py   # sankofad under SIGKILL every few seconds: no lost or doubled writes
+python3 sim/gates.py    # agents editing one repo at once: clobbers with and without the gates
 ```
 
 Each drives the real CLI, hook, watcher, and daemon with synthetic sessions.

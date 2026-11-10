@@ -2,7 +2,7 @@
 # Build:   cd packaging/arch && makepkg -si
 # Local:   SANKOFA_SRC="git+file://$PWD/../..#branch=main" makepkg -si   (unreleased tree)
 pkgname=sankofa
-pkgver=0.3.0
+pkgver=0.4.0
 pkgrel=1
 pkgdesc="Handoff ledger and path leases for many AI coding sessions on one codebase"
 arch=('x86_64')
@@ -30,6 +30,11 @@ package() {
   install -Dm755 out/sankofad "$pkgdir/usr/bin/sankofad"
   install -Dm755 bin/sankofa "$pkgdir/usr/bin/sankofa"
   install -Dm755 bin/sankofa-watch "$pkgdir/usr/bin/sankofa-watch"
+  install -Dm755 hooks/git-pre-commit "$pkgdir/usr/share/sankofa/hooks/git-pre-commit"
+  for f in hooks/claude-code/*.sh hooks/codex/pre-tool.sh; do
+    install -Dm755 "$f" "$pkgdir/usr/share/sankofa/$f"
+  done
+  install -Dm644 hooks/codex/README.md "$pkgdir/usr/share/doc/$pkgname/codex.md"
   for u in sankofad.service sankofa-watch.service; do
     sed 's|@BIN@|/usr/bin|g' "systemd/$u" | install -Dm644 /dev/stdin "$pkgdir/usr/lib/systemd/user/$u"
   done

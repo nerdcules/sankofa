@@ -6,7 +6,7 @@
 # POSIX sh + jq.
 set -eu
 
-VERSION=0.3.0
+VERSION=0.4.0
 
 usage() {
   cat <<'USAGE'
@@ -28,7 +28,9 @@ usage: sankofa <command> [args]
   last [n]             show the newest n entries (default 5)
   log                  show the whole ledger
   hook stop            Stop hook: reads hook JSON on stdin
-  hook subagent-stop   SubagentStop hook: reads hook JSON on stdin
+  hook subagent-stop   SubagentStop hook: records the report, finishes the subagent's leases
+  hook session-end     SessionEnd hook: finishes every lease the session holds
+  gate install [dir]   install the git pre-commit gate in a repo (uninstall, status)
   watch add [dir]      toast this repo's awaiting items on the desktop (sankofa-watch)
   watch list           show watched repos
   watch rm [dir]       stop watching a repo
@@ -308,7 +310,8 @@ cmd_log()  { need_root; render < "$LEDGER"; }
 
 # Hook: reads Claude Code hook JSON on stdin. Silent no-op outside a sankofa repo.
 cmd_hook() {
-  kind=${1:-}; [ "$kind" = stop ] || [ "$kind" = subagent-stop ] || die "hook stop|subagent-stop"
+  kind=${1:-}
+  case $kind in stop|subagent-stop|session-end) ;; *) die "hook stop|subagent-stop|session-end" ;; esac
   input=$(cat)
   ROOT=$(find_root) || exit 0
   LEDGER=$ROOT/.sankofa/ledger.jsonl; CONFIG=$ROOT/.sankofa/config
@@ -319,9 +322,17 @@ cmd_hook() {
   active=$(printf '%s' "$input" | jq -r '.stop_hook_active // false')
   msg=$(printf '%s' "$input" | jq -r '.last_assistant_message // "" | gsub("[\n\t]+"; " ") | sub(" +$"; "") | .[0:400]')
   if [ "$kind" = subagent-stop ]; then
-    agent="subagent:$(printf '%s' "$input" | jq -r '.agent_name // .agent_type // .agent_id // "unnamed"')"
+    # the same holder name the pre-edit gate gives this subagent
+    agent=$(printf '%s' "$input" | jq -r '
+      if (.agent_id // "") != "" then "subagent:\((.agent_type // "") | if . == "" then "agent" else . end)/\(.agent_id)"
+      else "subagent:\(.agent_name // .agent_type // "unnamed")" end')
   else
     agent=main
+  fi
+
+  if [ "$kind" = session-end ]; then
+    dcall "$(jq -nc --arg repo "$ROOT" --arg session "$session" '{verb:"finish",repo:$repo,session:$session,text:"session ended"}')"
+    exit 0
   fi
 
   nopen=$(open_items | grep -c . || true)
@@ -366,7 +377,36 @@ cmd_hook() {
   fi
 
   append stop "${msg:-stopped}" "" "$session" "$agent" >/dev/null
+  if [ "$kind" = subagent-stop ]; then
+    dcall "$(jq -nc --arg repo "$ROOT" --arg session "$session" --arg agent "$agent" \
+              '{verb:"finish",repo:$repo,session:$session,agent:$agent,text:"subagent finished"}')"
+  fi
   exit 0
+}
+
+GATE_MARK="# sankofa pre-commit gate"
+cmd_gate() {
+  sub=${1:-status}; [ $# -gt 0 ] && shift
+  d=${1:-.}
+  hook=$(cd "$d" && git rev-parse --git-path hooks/pre-commit 2>/dev/null) || die "$d is not in a git repository"
+  case $hook in /*) ;; *) hook=$(cd "$d" && pwd -P)/$hook ;; esac
+  case $sub in
+    install)
+      if [ -e "$hook" ] && ! grep -qF "$GATE_MARK" "$hook"; then
+        die "$hook exists and is not sankofa's; add this line to it instead: sankofad gate git-pre-commit || exit 1"
+      fi
+      mkdir -p "$(dirname "$hook")"
+      cp "$SELF_DIR/../hooks/git-pre-commit" "$hook" 2>/dev/null || cp /usr/share/sankofa/hooks/git-pre-commit "$hook"
+      chmod +x "$hook"
+      echo "sankofa: pre-commit gate installed at $hook" ;;
+    uninstall)
+      [ -e "$hook" ] && grep -qF "$GATE_MARK" "$hook" || die "no sankofa gate at $hook"
+      rm -f "$hook"; echo "sankofa: pre-commit gate removed from $hook" ;;
+    status)
+      if [ -e "$hook" ] && grep -qF "$GATE_MARK" "$hook"; then echo "pre-commit gate: installed ($hook)"
+      else echo "pre-commit gate: not installed"; return 1; fi ;;
+    *) die "gate install|uninstall|status [dir]" ;;
+  esac
 }
 
 watch_reg() { printf '%s' "${XDG_CONFIG_HOME:-$HOME/.config}/sankofa/watched"; }
@@ -409,6 +449,7 @@ main() {
     log)       cmd_log "$@" ;;
     hook)      cmd_hook "$@" ;;
     claim)     cmd_claim "$@" ;;
+    gate)      cmd_gate "$@" ;;
     release)   cmd_release "$@" ;;
     ask)       cmd_ask "$@" ;;
     leases)    cmd_leases "$@" ;;

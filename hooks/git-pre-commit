@@ -1,0 +1,8 @@
+#!/bin/sh
+# sankofa pre-commit gate
+# Refuses a commit that touches a path another session or subagent has leased, or when
+# sankofad is not answering. The universal gate: it works for every client, with or without
+# hooks of its own. Override once with SANKOFA_GATE=0 or git commit --no-verify.
+[ "${SANKOFA_GATE:-1}" = 0 ] && exit 0
+d=${SANKOFA_DAEMON_BIN:-$(command -v sankofad)} || { echo "sankofa: sankofad not found; commit gate skipped" >&2; exit 0; }
+exec "$d" gate git-pre-commit
