@@ -16,3 +16,14 @@ stop_json() { # session [stop_hook_active] [message]
 run_hook() { # run_hook <kind> <json>  -> sets RC (exit code) and ERR (stderr)
   set +e; ERR=$(printf '%s' "$2" | "$S" hook "$1" 2>&1 >/dev/null); RC=$?; set -e
 }
+stop_json_t() { # session transcript_path [stop_hook_active]
+  jq -nc --arg s "$1" --arg t "$2" --argjson a "${3:-false}" \
+    '{session_id:$s, transcript_path:$t, stop_hook_active:$a, last_assistant_message:"ok", hook_event_name:"Stop"}'
+}
+ms_now() { python3 -c 'import datetime;print(datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]+"Z")'; }
+tx_tool() { # transcript tool_name: append an assistant entry that calls the tool, timestamped now
+  sleep 0.01
+  jq -nc --arg ts "$(ms_now)" --arg n "$2" \
+    '{type:"assistant",timestamp:$ts,message:{content:[{type:"text",text:"x"},{type:"tool_use",name:$n,input:{}}]}}' >> "$1"
+  sleep 0.01
+}
