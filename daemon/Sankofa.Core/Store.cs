@@ -15,7 +15,7 @@ public sealed class SankofaException(string message) : Exception(message);
 /// </summary>
 public sealed class Store : IDisposable
 {
-    public const string Version = "0.3.0";
+    public const string Version = "0.4.0";
     public const long DefaultTtlSeconds = 1800;
     static readonly HashSet<string> AppendTypes = ["note", "todo", "awaiting", "stop", "flag"];
     const string Cols = "seq, repo, id, ts, type, session, agent, text, ref, wt, glob, expires, nonce";
@@ -218,11 +218,21 @@ public sealed class Store : IDisposable
         }
     }
 
-    /// <summary>Finish every live lease of a holder (agent null: every agent of the session).</summary>
-    public List<Entry> Finish(string repo, string session, string? agent, string text)
+    /// <summary>
+    /// Finish every live lease of a holder (agent null: every agent of the session), in one repo
+    /// or, with repo null, in every repo: a session's hooks run in its own directory, but its
+    /// subagents may hold leases anywhere.
+    /// </summary>
+    public List<Entry> Finish(string? repo, string session, string? agent, string text)
     {
         lock (gate)
         {
+            if (repo is null)
+            {
+                var repos = db.Query("SELECT DISTINCT repo FROM leases WHERE state='held' AND session=?", session)
+                              .Select(r => (string)r[0]!).ToList();
+                return repos.Where(Directory.Exists).SelectMany(r => Finish(r, session, agent, text)).ToList();
+            }
             repo = RepoKey(repo);
             SyncLocked(repo); ExpireDue(repo);
             var mine = Leases(repo, "state='held' AND session=?", session).Where(l => agent is null || l.Agent == agent).ToList();

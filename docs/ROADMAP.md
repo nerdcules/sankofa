@@ -87,6 +87,15 @@ run; a subagent now takes over only after the parent has left the file alone
 for `handover_idle` (default 5s), and the rerun had no clobbers across about 4
 handovers a run.
 
+Exit, a real run (2026-11-10): two Claude Code background subagents edited one
+shared header at once. In the first run, beta's edits were denied with alpha
+named as the holder, and nothing was lost. But SubagentStop runs in the main
+session's directory, so it finished alpha's leases in the wrong repo, and beta
+was locked out for the full lease. Leases now end with their holder in every
+repo. In the rerun, beta was denied twice while alpha held the header, got it
+1.5 s after alpha finished, and the file kept both agents' lines. The run also
+confirmed that `agent_id` is the same in PreToolUse and SubagentStop.
+
 ## 0.5 · mcp
 
 Deliver: `sankofad --mcp` stdio server exposing the same verbs; config snippets

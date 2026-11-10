@@ -217,6 +217,19 @@ public sealed class StoreTests : IDisposable
     }
 
     [Fact]
+    public void Finish_without_a_repo_reaches_every_repo_the_holder_leased_in()
+    {
+        var other = Path.Combine(dir, "other");
+        Directory.CreateDirectory(Path.Combine(other, ".sankofa"));
+        store.Claim(repo, "a", "s1", "subagent:x/1", 600);
+        store.Claim(other, "b", "s1", "subagent:x/1", 600);
+        store.Claim(other, "c", "s1", "subagent:x/2", 600);
+        Assert.Equal(["a", "b"], store.Finish(null, "s1", "subagent:x/1", "subagent finished").Select(e => e.Glob).Order());
+        Assert.Empty(store.Leases(repo));
+        Assert.Equal("c", Assert.Single(store.Leases(other)).Glob);
+    }
+
+    [Fact]
     public void Each_event_is_raised_once_with_a_rising_sequence()
     {
         var seen = new List<Entry>();

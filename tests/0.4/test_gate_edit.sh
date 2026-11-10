@@ -28,15 +28,17 @@ gate claude-code "$(edit_json A "$F")"; denied || fail "parent must wait for its
 assert_contains "$(reason)" "leased to A [subagent:general-purpose/ag1]" "names the subagent"
 gate claude-code "$(edit_json A "$F" ag2 general-purpose)"; denied || fail "a sibling subagent is another holder"
 
-# SubagentStop finishes that subagent's leases; the next editor gets a clean file
-jq -nc '{session_id:"A",agent_id:"ag1",agent_type:"general-purpose",last_assistant_message:"done"}' | $S hook subagent-stop
+# SubagentStop finishes that subagent's leases; the next editor gets a clean file. The hook runs
+# in the session's own directory, which need not be this repo or any ledger repo at all.
+mkdir -p "$TD/elsewhere"
+(cd "$TD/elsewhere" && jq -nc '{session_id:"A",agent_id:"ag1",agent_type:"general-purpose",last_assistant_message:"done"}' | $S hook subagent-stop)
 assert_contains "$($S ask src/a.c)" "free  src/a.c" "subagent stop finished its lease"
 assert_eq "$($S ask src/a.c | grep -c dirty || true)" 0 "finished, not dirty"
 gate claude-code "$(edit_json B "$F")"; assert_eq "$OUT" "" "B can edit now"
 
 # SessionEnd finishes every lease of the session
 gate claude-code "$(edit_json B "$PWD/src/b.c")"
-jq -nc '{session_id:"B",reason:"other",hook_event_name:"SessionEnd"}' | $S hook session-end
+(cd "$TD/elsewhere" && jq -nc '{session_id:"B",reason:"other",hook_event_name:"SessionEnd"}' | $S hook session-end)
 assert_eq "$($S leases)" "no leases" "session end finished all of B's leases"
 
 # expired lease: second edit allowed, and warned about the half-finished edit via the ledger
