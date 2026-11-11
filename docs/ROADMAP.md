@@ -237,6 +237,25 @@ Outcome (0.9.0): the letter is a tag object at `refs/sankofa/handoff/<branch>`
 second clone with pickup's refspec, then removed with a lease). Not yet run: a
 simulation of handoffs going back and forth between people.
 
+## 0.10 · terminal dashboard
+
+Deliver: `sankofa-tui`, the dashboard in the terminal, for everyone who is not
+on Omarchy (and over SSH): Turbo Vision style, on Terminal.Gui v2, Native AOT.
+`sankofa dash` opens it; the Qt app stays as `sankofa dash --qt`.
+
+Tests: the fold (`Board`, in Sankofa.Core) on the Qt dashboard's fixtures,
+following appended, half-written, replaced and emptied files; `summary` and
+`summary --json`; the real binary in a real terminal (tmux): panels, a todo
+written outside appearing, `d` resolving an item through the CLI with its
+text in the ledger, help, about, zoom, quit.
+
+Outcome (0.10.0): an AOT spike first: Terminal.Gui 2.5.0 published with no
+trim or AOT warnings and ran without its Oniguruma library; 9.9 MB, about
+85 ms to start and stop. The fold moved into Sankofa.Core so the terminal
+dashboard and the daemon share the event types; the Qt dashboard keeps its
+own C++ copy. A dialog with a fixed height let its button row hide the text
+field (found driving it in tmux), so dialogs size themselves.
+
 ## Later / maybe
 
 - Test runner subscriber (run on `done`, write `tests` event).

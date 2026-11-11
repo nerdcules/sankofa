@@ -73,7 +73,7 @@ if [ "${1:-}" = --uninstall ]; then
   mcp_unregister
   sysd daemon-reload
   [ -f "$UNIT_DIR/sankofa-hub.service" ] && { sysd disable --now sankofa-hub.service; rm -f "$UNIT_DIR/sankofa-hub.service"; }
-  rm -f "$BIN/sankofa" "$BIN/sankofa-watch" "$BIN/sankofad" "$BIN/sankofa-mcp" "$BIN/sankofa-hub"
+  rm -f "$BIN/sankofa" "$BIN/sankofa-watch" "$BIN/sankofad" "$BIN/sankofa-mcp" "$BIN/sankofa-hub" "$BIN/sankofa-tui"
   backup
   tmp=$(mktemp)
   jq --argjson hs "$HOOKS" '
@@ -116,6 +116,7 @@ if [ -x "$DAEMON" ]; then
   ln -sf "$DAEMON" "$BIN/sankofad"
   [ -x "$HERE/bin/out/sankofa-mcp" ] && ln -sf "$HERE/bin/out/sankofa-mcp" "$BIN/sankofa-mcp"
   [ -x "$HERE/bin/out/sankofa-hub" ] && ln -sf "$HERE/bin/out/sankofa-hub" "$BIN/sankofa-hub"
+  [ -x "$HERE/bin/out/sankofa-tui" ] && ln -sf "$HERE/bin/out/sankofa-tui" "$BIN/sankofa-tui"
   install_unit sankofad.service
   echo "install: $BIN/sankofad -> $DAEMON"
 else

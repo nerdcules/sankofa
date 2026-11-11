@@ -6,7 +6,7 @@
 # POSIX sh + jq.
 set -eu
 
-VERSION=0.9.0
+VERSION=0.10.0
 
 usage() {
   cat <<'USAGE'
@@ -50,8 +50,10 @@ usage: sankofa <command> [args]
                        git remote, like github.com/you/repo; use the same name on every device)
   hub off              stop; the replica is kept as .sankofa/ledger.hub.jsonl
   hub [status]         online / offline, the hub name, writes queued while offline
-  dash [repo...]       open the dashboard (sankofa-dash): who holds what, what is open,
-                       what waits on you; summary prints the same as text
+  dash [repo...]       the dashboard in the terminal (sankofa-tui): what waits on you,
+                       what is open, who holds what; menus, F1 for keys. Repos default to
+                       this one, else the watched ones. dash summary [--json] prints it;
+                       dash --qt opens the Qt window (sankofa-dash) where installed
   watch add [dir]      toast this repo's awaiting, overlap and landed events (sankofa-watch)
   watch list           show watched repos
   watch rm [dir]       stop watching a repo
@@ -773,9 +775,15 @@ main() {
     trees)     cmd_trees "$@" ;;
     bridge)    cmd_bridge "$@" ;;
     hub)       cmd_hub "$@" ;;
-    dash)      d=$(command -v sankofa-dash 2>/dev/null || :)
-               [ -n "$d" ] || { [ -x "$SELF_DIR/../dashboard/build/sankofa-dash" ] && d=$SELF_DIR/../dashboard/build/sankofa-dash; }
-               [ -n "$d" ] || die "sankofa-dash is not installed (dashboard/bin/install, or make dash)"
+    dash)      if [ "${1:-}" = --qt ]; then
+                 shift
+                 d=$(command -v sankofa-dash 2>/dev/null || :)
+                 [ -n "$d" ] || { [ -x "$SELF_DIR/../dashboard/build/sankofa-dash" ] && d=$SELF_DIR/../dashboard/build/sankofa-dash; }
+                 [ -n "$d" ] || die "sankofa-dash is not installed (dashboard/bin/install, or make dash)"
+               else
+                 d=$SELF_DIR/out/sankofa-tui; [ -x "$d" ] || d=$(command -v sankofa-tui 2>/dev/null || :)
+                 [ -n "$d" ] || die "sankofa-tui is not built (make build)"
+               fi
                exec "$d" "$@" ;;
     version|-V|--version) echo "sankofa $VERSION" ;;
     ""|help|-h|--help) usage ;;
