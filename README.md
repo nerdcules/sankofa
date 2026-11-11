@@ -32,14 +32,14 @@ sankofad ── SQLite, append-only events, leases with expiry
 
 ## Status
 
-Iteration 0.9: shell ledger, Stop hooks, desktop toasts for items that need
+Iteration 0.10: shell ledger, Stop hooks, desktop toasts for items that need
 you, `sankofad` (an SQLite event log and path leases), the gates (every edit
 is leased before it happens; git refuses commits on someone else's paths), an
 MCP server so any MCP client can use the ledger without a shell, and detection
 where prevention is not possible: two worktrees changing one path, and work
 that landed on a remote while you were away. A hub shares one ledger and one
 lease table between your machines, and with cloud sessions over MCP. A
-dashboard (`sankofa dash`, `dashboard/`) shows all of it in one window, and a
+terminal dashboard (`sankofa dash`) shows all of it in one screen, and a
 handoff passes a branch with its context to a teammate. See `docs/ROADMAP.md` for what comes next. Each iteration ships with
 tests, and its usage gate is run as an accelerated simulation (`sim/`) against
 the real code before the next starts.
@@ -266,11 +266,37 @@ hub name). A cloud routine that records its work there needs no bridge.
 
 ## Dashboard
 
-`sankofa dash` opens `sankofa-dash`, an Omarchy-style Qt app: what waits on
-you, open items, who holds what (and edits left half-finished), the last
-handoff per session, and recent overlaps, landings and flags, for every repo
-`sankofa watch add` lists. `sankofa dash summary` prints the same as text.
-It only reads the ledgers. See `dashboard/README.md`.
+`sankofa dash` opens `sankofa-tui`, the dashboard in the terminal, in the
+Turbo Vision manner: a menu bar (File, Repo, Item, View, Help), tiled panels
+and a status line. It runs anywhere sankofa does, over SSH too, in the
+terminal's own colours.
+
+```
+ File  Repo  Item  View  Help
+╭┤Waiting on you (2)├─────────────────╮╭┤Leases (4)├─────────────────────────╮
+│e6      6h  api  Needs a decision: … ││e10   ended?  api  migrations/**  (s-…│
+│e14    now  api  handoff parser: nu… ││e2    held    web  src/Chart.tsx  (s-…│
+╰─────────────────────────────────────╯╰─────────────────────────────────────╯
+╭┤Open (2)├───────────────────────────╮╭┤Last word (3)├──────────────────────╮
+│e9      6h  api  Remove the TAX_LEG… ││  6h  api  s-c013 @laptop: Tax rou…  │
+╰─────────────────────────────────────╯╰┤Alerts (2)├─────────────────────────╯
+ F1  Help │ Enter  Open │ Space  Copy │ F5  Zoom │ F9  Menu │ Alt+X  Quit
+```
+
+- Waiting on you: awaiting items and handoffs. Open: todos. Leases: held, and
+  ended ones that may hold a half-finished edit. Last word: each session's
+  newest note or reply. Alerts: overlaps, landings, flags.
+- Enter opens a row (the full text, then Done, Pick up or Copy). `d` resolves
+  an item (it asks how), `p` picks up a handoff, Space copies the command a
+  row stands for, F5 zooms a panel, `?` lists the keys, `q` quits. Actions run
+  the `sankofa` CLI, so they land in the ledger like anything typed.
+- Repos: the one you are in, else every repo `sankofa watch add` lists, or
+  the ones named (`sankofa dash ~/a ~/b`); the Repo menu narrows to one. It
+  follows the ledger files, so it works with no daemon and for hub replicas.
+- `sankofa dash summary [--json]` prints the same with no terminal.
+
+On Omarchy, `sankofa dash --qt` opens `sankofa-dash`, the Qt window, with the
+same panels (see `dashboard/README.md`).
 
 ## Simulations
 
