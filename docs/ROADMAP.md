@@ -232,9 +232,10 @@ on the machines it is for.
 
 Outcome (0.9.0): the letter is a tag object at `refs/sankofa/handoff/<branch>`
 (no commit in the branch's history), and a `handoff` event, an open item with
-`branch` and `sha`. Not yet checked: that a hosted remote (GitHub) accepts and
-serves `refs/sankofa/*` pushes, and a simulation of handoffs going back and
-forth between people.
+`branch` and `sha`. GitHub accepts, serves and deletes `refs/sankofa/*` refs
+(checked on this repo's remote, 2026-11-11: a tag object pushed, fetched by a
+second clone with pickup's refspec, then removed with a lease). Not yet run: a
+simulation of handoffs going back and forth between people.
 
 ## Later / maybe
 
