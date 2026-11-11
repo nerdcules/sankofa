@@ -252,6 +252,9 @@ python3 sim/mcp.py      # Claude Code and Codex MCP clients on one ledger, daemo
 python3 sim/overlap.py  # agents in several worktrees: overlaps missed, false, or reported twice
 python3 sim/overnight.py # routines pushing overnight while the laptop sleeps: one landed and one toast each
 python3 sim/hub.py      # desk, laptop and a cloud session on one hub, with cuts, dead routes and restarts
+python3 sim/hub.py --docker --skew 90  # the same with hub, desk and laptop as separate containers:
+                        # set up by install.sh, unplugged, firewalled, paused (lid shut), rebooted,
+                        # the hub box crashed, the laptop's clock 90 s ahead (needs docker)
 ```
 
 Each drives the real CLI, hook, watcher, and daemon with synthetic sessions.

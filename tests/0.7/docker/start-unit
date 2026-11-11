@@ -1,0 +1,9 @@
+#!/bin/sh
+# start-unit <unit>: run the ExecStart line install.sh wrote, as systemd would. The containers
+# have no systemd, so this is what boot (or a service restart) does there.
+set -eu
+u=$HOME/.config/systemd/user/$1
+cmd=$(sed -n 's/^ExecStart=//p' "$u")
+[ -n "$cmd" ] || { echo "start-unit: no ExecStart in $u" >&2; exit 1; }
+# shellcheck disable=SC2086  # the unit's command line is split as systemd splits it
+exec $cmd >>"$HOME/$1.log" 2>&1

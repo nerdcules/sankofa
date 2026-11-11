@@ -169,9 +169,25 @@ all 382 replayed claims on held paths flagged. It found a queued `done` whose
 todo had gone up in an earlier reconcile being refused (ids are now mapped
 across batches), and edit-gate claims waiting behind a slow reconcile (the gate
 now has its own connection and never waits for one). Edit gate through the
-hub on one machine: median 5.0 ms, p99 7 ms; offline, median 4.3 ms. Exit
-still open: desktop and laptop sharing one ledger for a week needs the second
-machine and a hub on the private network.
+hub on one machine: median 5.0 ms, p99 7 ms; offline, median 4.3 ms.
+
+Exit, simulated on separate machines (2026-11-11): `sim/hub.py --docker` runs
+the same week with the hub, the desktop and the laptop as three containers on
+their own network, sharing nothing else. Each box is set up the way a real one
+is: `install.sh` (`--hub` on the hub box), `sankofad hub token add`,
+`sankofa hub join http://hub:8787 ...`, `sankofa hub on`, with the daemons
+started from the units `install.sh` wrote. On top of the local run's failures,
+the laptop is unplugged from the network, firewalled into silence, paused with
+its lid shut (frozen processes, stale connections on waking) and rebooted, and
+the hub box is killed outright as well as restarted. With the laptop's clock 90 s
+ahead (libfaketime), 3 seeds x 7 days: 1042 acknowledged writes, 87 of them
+offline, none lost or doubled, both replicas identical to the hub, all 82
+replayed claims on held paths flagged; the same without the skew. Edit gate in
+a container: median 13 ms, of which the hub adds about 1 ms (a local repo in
+the same box takes 11.7 ms; the rest is process start inside a container). A
+gate on a silent dead route waits out its 250 ms budget once, then the breaker
+answers in about 6 ms. Not covered: Tailscale itself, and whether one shared
+ledger helps in daily use across two machines; that is left to real use.
 
 ## 0.8 · dashboard (optional)
 
