@@ -24,6 +24,8 @@ public sealed class Server
     static readonly HashSet<string> HubVerbs =
         ["append", "done", "claim", "release", "ask", "check", "finish", "leases", "open", "last", "events", "sync", "record"];
     public Bridge? Bridge { get; set; }
+    /// <summary>Clears dirty marks git can vouch for (0.8.1).</summary>
+    public Settle? Settle { get; set; }
     Overlaps? passive;
     Overlaps Trees => Overlaps ?? (passive ??= new Overlaps(store, useInotify: false));
 
@@ -273,6 +275,11 @@ public sealed class Server
                 {
                     var e = store.Record(Repo(), r.Entry ?? throw new SankofaException("record needs an entry"));
                     return new Response { Id = e.Id, Entry = e };
+                }
+                case "settle":
+                {
+                    var s = Settle ?? new Settle(store, Dispatch, Link);
+                    return new Response { Entries = r.Repo is null ? s.All() : s.Repo(r.Repo) };
                 }
                 case "rescan":
                     return new Response { Entries = Trees.Scan(Repo()) };

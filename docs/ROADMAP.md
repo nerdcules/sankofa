@@ -208,6 +208,14 @@ keys. Pointed at this repo's own ledger it showed at once what reading the
 file by hand had not: 13 leases the edit gate took for this session, expired
 and still marked half-finished although their edits were committed.
 
+0.8.1: the daemon settles those. About once a minute (`SANKOFA_SETTLE`), each
+ended lease still marked dirty is checked against git; when none of its paths
+has an uncommitted change (staged, unstaged or untracked) in any worktree of
+the repo, sankofad finishes it with a `done` saying so. In a repo shared
+through a hub only the device that held the lease settles it, and only while
+the hub answers, so a settle is never queued. On this repo it settled 18 stale
+leases and kept the two whose files were being edited.
+
 ## Later / maybe
 
 - Test runner subscriber (run on `done`, write `tests` event).

@@ -6,7 +6,7 @@
 # POSIX sh + jq.
 set -eu
 
-VERSION=0.8.0
+VERSION=0.8.1
 
 usage() {
   cat <<'USAGE'
@@ -21,6 +21,8 @@ usage: sankofa <command> [args]
   release <id>         give a lease up without finishing (its dirty mark stays)
   ask <path>           who holds this path: held / free, plus half-finished edits
   leases               live leases and ended ones still marked dirty
+  leases settle        finish ended dirty leases whose paths git shows clean (sankofad
+                       also does this every minute)
   events [--follow] [--since N] [--all]   raw events from sankofad, one JSON per line;
                        --follow alone streams new events, with --since it replays first
   daemon               is sankofad answering?
@@ -310,6 +312,12 @@ cmd_ask() {
 
 cmd_leases() {
   need_root
+  if [ "${1:-}" = settle ]; then
+    dneed "$(jq -nc --arg repo "$ROOT" '{verb:"settle",repo:$repo}')"
+    out=$(printf '%s' "$DOUT" | jq -r '.entries[]? | "\(.ref)\t\(.text)"')
+    if [ -z "$out" ]; then echo "nothing to settle"; else printf '%s\n' "$out"; fi
+    return
+  fi
   dcall "$(jq -nc --arg repo "$ROOT" '{verb:"leases",repo:$repo}')"
   case $DRC in 0) ;; 3) die "sankofad unreachable; leases live in the daemon" ;; *) die "$(derr)" ;; esac
   out=$(printf '%s' "$DOUT" | jq -c '.leases[]?' | fmt_lease)

@@ -153,6 +153,13 @@ public sealed partial class Store
         }
     }
 
+    /// <summary>Every repo this daemon keeps a ledger for: its own and the hub replicas.</summary>
+    public List<string> LedgerRepos()
+    {
+        lock (gate)
+            return db.Query("SELECT repo FROM repos UNION SELECT repo FROM replicas ORDER BY 1").Select(r => (string)r[0]!).ToList();
+    }
+
     public List<ReplicaState> Replicas()
     {
         lock (gate)

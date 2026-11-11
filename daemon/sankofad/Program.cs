@@ -71,7 +71,10 @@ static int Serve(string socket, string dbPath)
             StreamSilence = TimeSpan.FromSeconds(Defaults.Seconds("SANKOFA_HUB_SILENCE", 45)),
         };
         server.Link = link;
-        link.Start(); overlaps.Start(); bridge.Start();
+        // 0.8.1: ended leases whose paths git shows clean lose their half-finished mark
+        using var settle = new Settle(store, server.Dispatch, link) { Period = TimeSpan.FromSeconds(Defaults.Seconds("SANKOFA_SETTLE", 60)) };
+        server.Settle = settle;
+        link.Start(); overlaps.Start(); bridge.Start(); settle.Start();
         Console.Error.WriteLine($"sankofad {Store.Version}: listening on {socket}, db {dbPath}");
         server.RunAsync(listener, cts.Token).GetAwaiter().GetResult();
         return 0;
