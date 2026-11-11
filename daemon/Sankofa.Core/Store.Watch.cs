@@ -180,8 +180,10 @@ public sealed partial class Store
             // a crash between writing the events and saving the refs re-finds the same landings: skip those
             var written = landed
                 .Where(e => e.Type == "handoff"
-                    // the sender's own handoff, or one already recorded, whichever branch name it came under
-                    ? db.Scalar("SELECT 1 FROM events WHERE repo=? AND type='handoff' AND sha=?", repo, e.Sha) is null
+                    // the sender's own handoff, or one already recorded, whichever branch name it came under: the
+                    // letter tells them apart (the same commit can be handed off twice, by two people)
+                    ? db.Scalar("SELECT 1 FROM events WHERE repo=? AND type='handoff' AND (letter=? OR (letter IS NULL AND sha=?))",
+                                repo, e.Letter, e.Sha) is null
                     : db.Scalar("SELECT sha FROM events WHERE repo=? AND type='landed' AND branch=? ORDER BY seq DESC LIMIT 1",
                                 repo, e.Branch) as string != e.Sha)
                 .Select(e => { e.Session = "sankofad"; e.Agent = "sankofad"; return AppendLocked(repo, e); }).ToList();
@@ -202,9 +204,9 @@ public sealed partial class Store
             var remote = h.Branch?.Split('/')[0];
             if (remote is null || !fetched.Contains(remote)) continue;
             var at = refNow(h);
-            if (at == h.Sha) continue;
+            if (at == (h.Letter ?? h.Sha)) continue;
             done.Add(Done(repo, h.Id, at is null ? $"picked up: the handoff of {h.Branch} is gone from {remote}"
-                                                   : $"superseded: {h.Branch} was handed off again at {at[..Math.Min(7, at.Length)]}",
+                                                   : $"superseded: {h.Branch} was handed off again",
                           "sankofad", "sankofad"));
         }
         return done;

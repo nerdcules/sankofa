@@ -213,7 +213,11 @@ accounts change hands: the teammate's agent carries on under their own.
 
 `pickup` fetches, takes the one handoff on offer (or the branch or id you
 name), switches to the branch (creating it to track the remote, or
-fast-forwarding yours), prints the letter, and finishes the handoff. Without a
+fast-forwarding yours), prints the letter, and finishes the handoff. It takes
+the handoff before switching, by removing the letter from the remote, so when
+two people pick up at once one gets it and the other is told; anything that
+would stop the switch (your own commits on the branch, an untracked file in
+the way) is checked first. Without a
 hub the letter's open items become todos in the teammate's ledger. It then
 removes the ref from the remote, so nobody picks it up twice. The bridge
 (`sankofa bridge on`) also fetches handoff refs: a new one is recorded and
@@ -309,6 +313,8 @@ python3 sim/mcp.py      # Claude Code and Codex MCP clients on one ledger, daemo
 python3 sim/overlap.py  # agents in several worktrees: overlaps missed, false, or reported twice
 python3 sim/overnight.py # routines pushing overnight while the laptop sleeps: one landed and one toast each
 python3 sim/hub.py      # desk, laptop and a cloud session on one hub, with cuts, dead routes and restarts
+python3 sim/handoff.py  # four people handing branches to each other through one git remote:
+                        # nothing lost, nothing picked up twice (also when two race for one)
 python3 sim/hub.py --docker --skew 90  # the same with hub, desk and laptop as separate containers:
                         # set up by install.sh, unplugged, firewalled, paused (lid shut), rebooted,
                         # the hub box crashed, the laptop's clock 90 s ahead (needs docker)

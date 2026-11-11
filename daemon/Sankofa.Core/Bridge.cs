@@ -114,9 +114,10 @@ public sealed class Bridge : IDisposable
         return ok;
     }
 
-    /// <summary>The commit the handoff ref for this event's branch (remote/branch) names now, or null.</summary>
+    /// <summary>What the handoff ref for this event's branch (remote/branch) names now: its letter,
+    /// or for an event from before letters were recorded, its commit. Null when it is gone.</summary>
     static string? HandoffRef(string repo, Entry h) =>
-        h.Branch is { } b && Git.Run(repo, "rev-parse", "-q", "--verify", $"{HandoffPrefix}{b}^{{commit}}") is { Ok: true } r
+        h.Branch is { } b && Git.Run(repo, "rev-parse", "-q", "--verify", $"{HandoffPrefix}{b}{(h.Letter is null ? "^{commit}" : "")}") is { Ok: true } r
             ? r.Out.Trim() : null;
 
     /// <summary>New or replaced handoff refs, as handoff events: the letter, who wrote it, the branch.</summary>
@@ -134,7 +135,7 @@ public sealed class Bridge : IDisposable
                 ? tl[7..].Split(" <")[0] : "someone";
             list.Add(new Entry
             {
-                Type = "handoff", Branch = rf[HandoffPrefix.Length..], Sha = c.Out.Trim(),
+                Type = "handoff", Branch = rf[HandoffPrefix.Length..], Sha = c.Out.Trim(), Letter = tag,
                 Text = $"from {tagger}: {body.Trim()}",
             });
         }

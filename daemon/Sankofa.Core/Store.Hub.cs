@@ -68,7 +68,7 @@ public sealed partial class Store
                 var e = new Entry
                 {
                     Type = q.Type, Text = q.Text, Session = q.Session, Agent = q.Agent, Ref = reference, Wt = q.Wt,
-                    Glob = q.Glob, Expires = q.Expires, Nonce = q.Nonce, Branch = q.Branch, Sha = q.Sha, Ts = q.Ts,
+                    Glob = q.Glob, Expires = q.Expires, Nonce = q.Nonce, Branch = q.Branch, Sha = q.Sha, Letter = q.Letter, Ts = q.Ts,
                     Client = q.Client,
                 };
                 Entry? got = null;

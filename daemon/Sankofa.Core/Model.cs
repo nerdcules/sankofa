@@ -22,6 +22,9 @@ public sealed class Entry
     /// <summary>landed and handoff events: the remote-tracking branch (origin/x) and the commit it now points at.</summary>
     [JsonPropertyName("branch")] public string? Branch { get; set; }
     [JsonPropertyName("sha")] public string? Sha { get; set; }
+    /// <summary>handoff events: the letter (the tag object at refs/sankofa/handoff/&lt;branch&gt;), which
+    /// tells one handoff of a commit from another of the same commit.</summary>
+    [JsonPropertyName("letter")] public string? Letter { get; set; }
     /// <summary>0.7, through a hub: the device (from its token) and the client that wrote the event.</summary>
     [JsonPropertyName("device")] public string? Device { get; set; }
     [JsonPropertyName("client")] public string? Client { get; set; }
@@ -61,6 +64,7 @@ public sealed class Request
     /// <summary>append handoff: the remote branch handed over (origin/x) and the commit it was at.</summary>
     [JsonPropertyName("branch")] public string? Branch { get; set; }
     [JsonPropertyName("sha")] public string? Sha { get; set; }
+    [JsonPropertyName("letter")] public string? Letter { get; set; }
     [JsonPropertyName("n")] public int? N { get; set; }
     [JsonPropertyName("since")] public long? Since { get; set; }
     [JsonPropertyName("follow")] public bool Follow { get; set; }
@@ -166,7 +170,7 @@ public partial class Json : JsonSerializerContext
         var copy = new Entry
         {
             Ts = e.Ts, Id = e.Id, Type = e.Type, Session = e.Session, Agent = e.Agent, Text = e.Text,
-            Ref = e.Ref, Wt = e.Wt, Glob = e.Glob, Expires = e.Expires, Nonce = e.Nonce, Branch = e.Branch, Sha = e.Sha,
+            Ref = e.Ref, Wt = e.Wt, Glob = e.Glob, Expires = e.Expires, Nonce = e.Nonce, Branch = e.Branch, Sha = e.Sha, Letter = e.Letter,
             Device = e.Device, Client = e.Client,
         };
         return JsonSerializer.Serialize(copy, Wire.Entry);
