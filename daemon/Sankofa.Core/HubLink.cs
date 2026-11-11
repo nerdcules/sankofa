@@ -372,7 +372,7 @@ public sealed class HubLink : IDisposable
                 : Response.Fail($"hub unreachable at {url}");
         var e = r.Verb switch
         {
-            "append" => new Entry { Type = r.Type ?? "note", Text = r.Text ?? "", Ref = r.Ref, Wt = r.Wt, Branch = r.Branch, Sha = r.Sha },
+            "append" => new Entry { Type = r.Type ?? "note", Text = r.Text ?? "", Ref = r.Ref, Wt = r.Wt, Branch = r.Branch, Sha = r.Sha, Letter = r.Letter },
             "done" => new Entry { Type = "done", Text = string.IsNullOrWhiteSpace(r.Text) ? "resolved" : r.Text!, Ref = r.Ref, Wt = r.Wt },
             "release" => new Entry { Type = "release", Text = $"release {r.Ref}", Ref = r.Ref },
             "claim" => new Entry

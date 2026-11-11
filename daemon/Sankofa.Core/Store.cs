@@ -15,10 +15,10 @@ public sealed class SankofaException(string message) : Exception(message);
 /// </summary>
 public sealed partial class Store : IDisposable
 {
-    public const string Version = "0.10.0";
+    public const string Version = "0.10.1";
     public const long DefaultTtlSeconds = 1800;
     static readonly HashSet<string> AppendTypes = ["note", "todo", "awaiting", "handoff", "stop", "flag"];
-    const string Cols = "seq, repo, id, ts, type, session, agent, text, ref, wt, glob, expires, nonce, branch, sha, device, client";
+    const string Cols = "seq, repo, id, ts, type, session, agent, text, ref, wt, glob, expires, nonce, branch, sha, device, client, letter";
     const string LeaseCols = "id, glob, session, agent, claimed, expires, dirty, state, device";
 
     readonly Db db;
@@ -79,6 +79,8 @@ public sealed partial class Store : IDisposable
         // 0.6: landed events name a branch and a commit
         try { db.Exec("ALTER TABLE events ADD COLUMN branch TEXT"); } catch (SqliteException) { }
         try { db.Exec("ALTER TABLE events ADD COLUMN sha TEXT"); } catch (SqliteException) { }
+        // 0.10: a handoff names its letter
+        try { db.Exec("ALTER TABLE events ADD COLUMN letter TEXT"); } catch (SqliteException) { }
         // 0.7: a hub records which device and client wrote each event
         try { db.Exec("ALTER TABLE events ADD COLUMN device TEXT"); } catch (SqliteException) { }
         try { db.Exec("ALTER TABLE events ADD COLUMN client TEXT"); } catch (SqliteException) { }
@@ -102,7 +104,7 @@ public sealed partial class Store : IDisposable
 
     public Entry Append(string repo, string type, string text, string? session, string? agent,
                         string? reference = null, string? wt = null, string? nonce = null,
-                        string? branch = null, string? sha = null)
+                        string? branch = null, string? sha = null, string? letter = null)
     {
         if (!AppendTypes.Contains(type)) throw new SankofaException($"cannot append type '{type}'");
         if (type == "handoff" && (string.IsNullOrEmpty(branch) || string.IsNullOrEmpty(sha)))
@@ -116,7 +118,7 @@ public sealed partial class Store : IDisposable
             return AppendLocked(repo, new Entry
             {
                 Type = type, Text = text, Session = session ?? "-", Agent = agent ?? "main", Ref = reference, Wt = wt,
-                Nonce = nonce, Branch = type == "handoff" ? branch : null, Sha = type == "handoff" ? sha : null,
+                Nonce = nonce, Branch = type == "handoff" ? branch : null, Sha = type == "handoff" ? sha : null, Letter = type == "handoff" ? letter : null,
             });
         }
     }
@@ -466,10 +468,10 @@ public sealed partial class Store : IDisposable
 
     long Insert(string repo, Entry e, string source) =>
         (long)db.Query("""
-            INSERT INTO events(repo,id,ts,type,session,agent,text,ref,wt,glob,expires,nonce,branch,sha,device,client,source)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING seq
+            INSERT INTO events(repo,id,ts,type,session,agent,text,ref,wt,glob,expires,nonce,branch,sha,device,client,source,letter)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING seq
             """, repo, e.Id, e.Ts, e.Type, e.Session, e.Agent, e.Text, e.Ref, e.Wt, e.Glob, e.Expires, e.Nonce,
-                 e.Branch, e.Sha, e.Device, e.Client, source)[0][0]!;
+                 e.Branch, e.Sha, e.Device, e.Client, source, e.Letter)[0][0]!;
 
     /// <summary>Lease state follows from events; imported events go through here too.</summary>
     void Apply(string repo, Entry e)
@@ -535,6 +537,6 @@ public sealed partial class Store : IDisposable
             Seq = (long)r[0]!, Repo = (string)r[1]!, Id = (string)r[2]!, Ts = (string)r[3]!, Type = (string)r[4]!,
             Session = (string)r[5]!, Agent = (string)r[6]!, Text = (string)r[7]!, Ref = (string?)r[8],
             Wt = (string?)r[9], Glob = (string?)r[10], Expires = (string?)r[11], Nonce = (string?)r[12],
-            Branch = (string?)r[13], Sha = (string?)r[14], Device = (string?)r[15], Client = (string?)r[16],
+            Branch = (string?)r[13], Sha = (string?)r[14], Device = (string?)r[15], Client = (string?)r[16], Letter = (string?)r[17],
         }).ToList();
 }

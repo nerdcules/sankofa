@@ -6,7 +6,7 @@
 # POSIX sh + jq.
 set -eu
 
-VERSION=0.10.0
+VERSION=0.10.1
 
 usage() {
   cat <<'USAGE'
@@ -180,10 +180,10 @@ append() {
   wt=$(wt_fp); nonce=$(new_nonce)
   req=$(jq -nc --arg repo "$ROOT" --arg type "$1" --arg text "$2" --arg ref "${3:-}" \
     --arg session "${4:-$(session_id)}" --arg agent "${5:-$(agent_name)}" --arg wt "$wt" --arg nonce "$nonce" \
-    --arg client "$(client_name)" --arg branch "${A_BRANCH:-}" --arg sha "${A_SHA:-}" \
+    --arg client "$(client_name)" --arg branch "${A_BRANCH:-}" --arg sha "${A_SHA:-}" --arg letter "${A_LETTER:-}" \
     '{verb:"append",repo:$repo,type:$type,text:$text,session:$session,agent:$agent,nonce:$nonce,client:$client}
      + (if $ref != "" then {ref:$ref} else {} end) + (if $wt != "-" then {wt:$wt} else {} end)
-     + (if $branch != "" then {branch:$branch,sha:$sha} else {} end)')
+     + (if $branch != "" then {branch:$branch,sha:$sha} else {} end) + (if $letter != "" then {letter:$letter} else {} end)')
   dcall "$req"
   case $DRC in
     0) printf '%s' "$DOUT" | jq -r .id; return 0 ;;
@@ -203,10 +203,10 @@ local_append() {
   jq -nc \
     --arg ts "$(now)" --arg id "$id" --arg type "$1" --arg text "$2" \
     --arg ref "${3:-}" --arg session "${4:-$(session_id)}" --arg agent "${5:-$(agent_name)}" \
-    --arg wt "${6:-$(wt_fp)}" --arg nonce "${7:-}" --arg branch "${A_BRANCH:-}" --arg sha "${A_SHA:-}" \
+    --arg wt "${6:-$(wt_fp)}" --arg nonce "${7:-}" --arg branch "${A_BRANCH:-}" --arg sha "${A_SHA:-}" --arg letter "${A_LETTER:-}" \
     '{ts:$ts,id:$id,type:$type,session:$session,agent:$agent,text:$text}
      + (if $ref != "" then {ref:$ref} else {} end)
-     + (if $branch != "" then {branch:$branch,sha:$sha} else {} end)
+     + (if $branch != "" then {branch:$branch,sha:$sha} else {} end) + (if $letter != "" then {letter:$letter} else {} end)
      + (if $wt != "-" then {wt:$wt} else {} end)
      + (if $nonce != "" then {nonce:$nonce} else {} end)' >> "$LEDGER"
   [ "$locked" = 1 ] && { flock -u 9; exec 9>&-; }
@@ -316,7 +316,7 @@ $items"
     [ -n "$(cfg hub_repo "")" ] || die "the branch is pushed, but $remote refused refs/sankofa/handoff/$rb"
     echo "sankofa: $remote refused the handoff ref; the hub ledger carries the handoff" >&2
   fi
-  id=$(A_BRANCH="$remote/$rb" A_SHA=$sha append handoff "$text")
+  id=$(A_BRANCH="$remote/$rb" A_SHA=$sha A_LETTER=$tag append handoff "$text")
   printf 'handed off %s at %s (pushed to %s)  %s\n' "$rb" "$(git rev-parse --short HEAD)" "$remote" "$id"
   printf 'on the other machine: sankofa pickup %s\n' "$rb"
 }
@@ -324,18 +324,29 @@ $items"
 # handoffs on offer, one per line: remote/branch TAB sha TAB ledger id (or -); never this machine's own
 handoffs() {
   me=$(this_device)
-  mine=$(jq -r --arg me "$me" 'select(.type=="handoff" and ((.device // "") == $me or (.device == null and .session != "sankofad"))) | .sha' "$LEDGER" | sort -u)
+  # this machine's own handoffs, by letter (the same commit may come back in someone else's letter)
+  mine=$(jq -r --arg me "$me" 'select(.type=="handoff" and ((.device // "") == $me or (.device == null and .session != "sankofad"))) | .letter // .sha' "$LEDGER" | sort -u)
+  hub=0; [ -n "$(cfg hub_repo "")" ] && hub=1
+  # each line: branch, sha, ledger id or -, g (git has the letter) or l (only the ledger), letter
   { for hid in $(open_items | awk -F'\t' '$2 == "handoff" { print $1 }'); do
-      jq -r --arg id "$hid" 'select(.id==$id) | "\(.branch)\t\(.sha)\t\(.id)"' "$LEDGER"
+      jq -r --arg id "$hid" 'select(.id==$id) | "\(.branch)\t\(.sha)\t\(.id)\tl\t\(.letter // .sha)"' "$LEDGER"
     done
     git for-each-ref --format='%(refname:strip=3)%09%(objectname)' refs/sankofa/remote | while IFS="$TAB" read -r b t; do
-      printf '%s\t%s\t-\n' "$b" "$(git rev-parse "$t^{commit}")"
+      printf '%s\t%s\t-\tg\t%s\n' "$b" "$(git rev-parse "$t^{commit}")" "$t"
     done
-  } | awk -F'\t' -v mine="$mine" '
+  } | awk -F'\t' -v mine="$mine" -v hub="$hub" '
       BEGIN { n = split(mine, m, "\n"); for (i = 1; i <= n; i++) skip[m[i]] = 1 }
-      $2 in skip { next }
-      { k = $1 FS $2; if (!(k in seen)) { seen[k] = 1; order[++c] = k }; if ($3 != "-") id[k] = $3 }
-      END { for (i = 1; i <= c; i++) print order[i] FS (order[i] in id ? id[order[i]] : "-") }'
+      $5 in skip || $2 in skip { next }
+      { k = $1 FS $2; if (!(k in seen)) { seen[k] = 1; order[++c] = k }; if ($3 != "-") id[k] = $3; if ($4 == "g") git[k] = 1 }
+      # without a hub the letter on the remote is the offer: a ledger copy without one was taken already
+      END { for (i = 1; i <= c; i++) if (hub || (order[i] in git)) print order[i] FS (order[i] in id ? id[order[i]] : "-") }'
+}
+
+# the handoff was taken but git would not switch after all: offer it again, as it was
+switch_failed() {
+  [ -z "$tag" ] || git push -q "$remote" "$tag:refs/sankofa/handoff/$rb" 2>/dev/null || :
+  [ "$hid" = - ] || A_BRANCH=$b A_SHA=$sha A_LETTER=$tag append handoff "$letter" >/dev/null || :
+  die "could not switch to $rb, so the handoff is offered again: $1"
 }
 
 cmd_pickup() {
@@ -369,23 +380,41 @@ cmd_pickup() {
   fi
   tip=$sha
   if git rev-parse -q --verify "refs/remotes/$b" >/dev/null && git merge-base --is-ancestor "$sha" "refs/remotes/$b"; then tip=refs/remotes/$b; fi
+  # everything that could refuse the switch is checked before the handoff is taken
   if git show-ref -q --verify "refs/heads/$rb"; then
-    git switch -q "$rb" || die "could not switch to $rb"
-    git merge -q --ff-only "$tip" 2>/dev/null || die "your $rb has commits of its own; merge $b by hand"
-  elif [ "$tip" != "$sha" ]; then git switch -q -c "$rb" --track "$b" || die "could not create $rb"
-  else git switch -q -c "$rb" "$sha" || die "could not create $rb"; fi
+    git merge-base --is-ancestor "refs/heads/$rb" "$tip" || die "your $rb has commits of its own; merge $b by hand"
+  fi
+  in_way=$({ git ls-tree -r --name-only "$tip"; git ls-files -o --exclude-standard; } | sort | uniq -d | head -n3 | tr '\n' ' ')
+  [ -z "$in_way" ] || die "untracked files here are in $rb too; move them first: $in_way"
+  hub=; [ -n "$(cfg hub_repo "")" ] && hub=1
+  # take it first, so two people picking up at once cannot both have it: removing the letter from
+  # the remote is the claim (only one removal of that letter succeeds); through a hub the done is
+  if [ -n "$tag" ]; then
+    if ! git push -q "--force-with-lease=refs/sankofa/handoff/$rb:$tag" "$remote" ":refs/sankofa/handoff/$rb" 2>/dev/null; then
+      now=$(git ls-remote "$remote" "refs/sankofa/handoff/$rb" 2>/dev/null | cut -f1)
+      if [ "$now" != "$tag" ]; then
+        git update-ref -d "refs/sankofa/remote/$b" 2>/dev/null || :
+        [ -z "$now" ] && die "someone else picked up $rb first"
+        die "$rb was handed off again meanwhile; run sankofa pickup again"
+      fi
+      [ -n "$hub" ] || die "$remote refused removing refs/sankofa/handoff/$rb, so the handoff cannot be taken"
+    fi
+    git update-ref -d "refs/sankofa/remote/$b" 2>/dev/null || :
+  fi
+  if [ "$hid" != - ] && ! (cmd_done "$hid" "picked up on $(this_device) at $(git rev-parse --short "$tip")") 2>/dev/null; then
+    if [ -n "$hub" ]; then die "someone else picked up $rb first"; fi
+  fi
+  if git show-ref -q --verify "refs/heads/$rb"; then
+    # one step, so a refusal leaves you where you were: $rb only moves forward (checked above)
+    err=$(git switch -q -C "$rb" "$tip" 2>&1) || switch_failed "$err"
+  elif [ "$tip" != "$sha" ]; then err=$(git switch -q -c "$rb" --track "$b" 2>&1) || switch_failed "$err"
+  else err=$(git switch -q -c "$rb" "$sha" 2>&1) || switch_failed "$err"; fi
   short=$(git rev-parse --short HEAD)
-  if [ "$hid" != - ]; then cmd_done "$hid" "picked up on $(this_device) at $short"
-  else append note "picked up $rb at $short from $who: $letter" >/dev/null; fi
+  [ "$hid" != - ] || append note "picked up $rb at $short from $who: $letter" >/dev/null
   # without a hub the open items exist only in the letter: carry them over as todos here
   if [ -z "$(cfg hub_repo "")" ]; then
     printf '%s\n' "$letter" | sed -n '/^Open items:$/,$ s/^- \([^ ]*\) [a-z]*: \(.*\)/\2 (from '"$who"', was \1)/p' |
       while IFS= read -r t; do append todo "$t" >/dev/null; done
-  fi
-  if [ -n "$tag" ]; then
-    git push -q "--force-with-lease=refs/sankofa/handoff/$rb:$tag" "$remote" ":refs/sankofa/handoff/$rb" 2>/dev/null ||
-      echo "sankofa: could not remove refs/sankofa/handoff/$rb from $remote; others may still see it" >&2
-    git update-ref -d "refs/sankofa/remote/$b" 2>/dev/null || :
   fi
   printf 'picked up %s from %s, now at %s\n\n%s\n' "$rb" "$who" "$short" "$letter"
 }

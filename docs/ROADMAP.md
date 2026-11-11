@@ -234,8 +234,26 @@ Outcome (0.9.0): the letter is a tag object at `refs/sankofa/handoff/<branch>`
 (no commit in the branch's history), and a `handoff` event, an open item with
 `branch` and `sha`. GitHub accepts, serves and deletes `refs/sankofa/*` refs
 (checked on this repo's remote, 2026-11-11: a tag object pushed, fetched by a
-second clone with pickup's refspec, then removed with a lease). Not yet run: a
-simulation of handoffs going back and forth between people.
+second clone with pickup's refspec, then removed with a lease).
+
+0.10.1, simulated (`sim/handoff.py`, 2026-11-11): four people (one with no
+daemon) on one bare remote, each with their own clone and sankofad, every
+outcome checked against git itself. The first runs found two ways a handoff
+could be picked up twice: two people picking up at once both switched (the
+letter was removed only after switching), and a pickup offered a ledger copy
+of a handoff someone else had already taken. Pickup now takes the handoff
+first (removing the letter is the claim; only one removal succeeds) after
+checking everything that could stop the switch, and without a hub offers only
+letters still on the remote. They also found that the same commit handed off
+again by someone else was taken for a repeat and never shown; handoff events
+now carry their `letter` (the tag object) and are told apart by it. After the
+fixes, 10 seeds x 300 steps: 244 handoffs and 65 re-handoffs, 179 pickups,
+35 races for one handoff (none won twice; 2 where both were rightly refused),
+every refusal (uncommitted 51, behind the remote 44, dirty 67, several on
+offer 69, diverged 31, untracked file in the way 2) where git said it should
+be, no commit lost, 3250 open items carried over exactly once, open handoffs
+on every machine matching the remote at the end, 277 toasts, none on a
+sender's own machine and none missed. Not simulated: handoffs through a hub.
 
 ## 0.10 · terminal dashboard
 
