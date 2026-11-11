@@ -49,6 +49,15 @@ static int Serve(string socket, string dbPath)
         using var store = new Store(dbPath);
         var server = new Server(store, socket);
         var listener = server.Bind();
+        // 0.6: overlap detection across worktrees, and the remote bridge
+        using var overlaps = new Overlaps(store) { Period = TimeSpan.FromSeconds(Defaults.Seconds("SANKOFA_RESCAN", 30)) };
+        using var bridge = new Bridge(store)
+        {
+            Tick = TimeSpan.FromSeconds(Defaults.Seconds("SANKOFA_BRIDGE_TICK", 5)),
+            RetryAfter = TimeSpan.FromSeconds(Defaults.Seconds("SANKOFA_BRIDGE_RETRY", 30)),
+        };
+        server.Overlaps = overlaps; server.Bridge = bridge;
+        overlaps.Start(); bridge.Start();
         Console.Error.WriteLine($"sankofad {Store.Version}: listening on {socket}, db {dbPath}");
         server.RunAsync(listener, cts.Token).GetAwaiter().GetResult();
         return 0;

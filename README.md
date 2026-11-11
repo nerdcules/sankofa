@@ -32,10 +32,12 @@ sankofad ── SQLite, append-only events, leases with expiry
 
 ## Status
 
-Iteration 0.5: shell ledger, Stop hooks, desktop toasts for items that need
+Iteration 0.6: shell ledger, Stop hooks, desktop toasts for items that need
 you, `sankofad` (an SQLite event log and path leases), the gates (every edit
-is leased before it happens; git refuses commits on someone else's paths), and
-an MCP server so any MCP client can use the ledger without a shell. See `docs/ROADMAP.md` for what comes next. Each iteration ships with
+is leased before it happens; git refuses commits on someone else's paths), an
+MCP server so any MCP client can use the ledger without a shell, and detection
+where prevention is not possible: two worktrees changing one path, and work
+that landed on a remote while you were away. See `docs/ROADMAP.md` for what comes next. Each iteration ships with
 tests, and its usage gate is run as an accelerated simulation (`sim/`) against
 the real code before the next starts.
 
@@ -152,6 +154,40 @@ and an edit checked by the gate have the same holder. Codex passes no session
 id, so every Codex session is one holder, `- [mcp:codex-mcp-client]`: Codex
 sessions are kept apart from Claude Code sessions, not from each other.
 
+## Overlaps and landings
+
+Leases prevent two agents editing one file in one tree. Agents in separate
+worktrees never ask each other, and two remote agents never touch your disk,
+so for those sankofa detects and tells you.
+
+```sh
+sankofa trees on        # watch this repo and every git worktree of it (found again as they come and go)
+sankofa trees add ../other-clone
+sankofa trees           # the trees, their branches, how many paths each changed
+sankofa bridge on 5m    # fetch the remotes every 5 minutes
+sankofa watch add       # toast awaiting, overlap and landed events on the desktop
+```
+
+- `overlap`: a path changed in two or more trees. A tree's changes count from
+  where it left the home tree's history (the merge base), so a worktree's
+  commits count until they are merged. The daemon watches each tree with
+  inotify (skipping `.git/`, ignored directories and nested repos) and asks git
+  after each burst of writes settles (300 ms), and rescans every 30 s for
+  commits and anything inotify missed. Each overlap is recorded once, again
+  only when another tree joins or after it has cleared. The event's `glob` is
+  the path.
+- `landed`: a remote branch moved, with `branch` (`origin/x`) and `sha`, the
+  commit count, and the newest subject and author. What the remote branches
+  pointed at is kept in the daemon's database, so a push made while the laptop
+  slept is reported on the first fetch after waking, even if your own
+  `git fetch` saw it first. A tip that is already in one of your local
+  branches (your own push, or work you pulled) is not reported. The first
+  fetch only takes a baseline. A failed fetch is retried after 30 s;
+  `sankofa bridge` shows the last error.
+
+Both are daemon-only: with `sankofad` down, nothing is watched or fetched, and
+the bridge catches up when it returns.
+
 ## Simulations
 
 ```sh
@@ -160,6 +196,8 @@ python3 sim/notify.py   # notifier: exactly-once delivery, latency, toasts per d
 python3 sim/daemon.py   # sankofad under SIGKILL every few seconds: no lost or doubled writes
 python3 sim/gates.py    # agents editing one repo at once: clobbers with and without the gates
 python3 sim/mcp.py      # Claude Code and Codex MCP clients on one ledger, daemon killed mid-run
+python3 sim/overlap.py  # agents in several worktrees: overlaps missed, false, or reported twice
+python3 sim/overnight.py # routines pushing overnight while the laptop sleeps: one landed and one toast each
 ```
 
 Each drives the real CLI, hook, watcher, and daemon with synthetic sessions.

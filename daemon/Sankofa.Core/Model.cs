@@ -19,6 +19,9 @@ public sealed class Entry
     [JsonPropertyName("expires")] public string? Expires { get; set; }
     /// <summary>Client-chosen id for one write, so a write whose answer was lost is never repeated.</summary>
     [JsonPropertyName("nonce")] public string? Nonce { get; set; }
+    /// <summary>landed events: the remote-tracking branch (origin/x) and the commit it now points at.</summary>
+    [JsonPropertyName("branch")] public string? Branch { get; set; }
+    [JsonPropertyName("sha")] public string? Sha { get; set; }
     /// <summary>Daemon-wide sequence number; only on the wire, never in the JSONL file.</summary>
     [JsonPropertyName("seq")] public long? Seq { get; set; }
     [JsonPropertyName("repo")] public string? Repo { get; set; }
@@ -57,6 +60,30 @@ public sealed class Request
     [JsonPropertyName("paths")] public List<string>? Paths { get; set; }
     [JsonPropertyName("inherit")] public bool Inherit { get; set; }
     [JsonPropertyName("idle")] public long? Idle { get; set; }
+    /// <summary>bridge: seconds between fetches</summary>
+    [JsonPropertyName("interval")] public long? Interval { get; set; }
+    [JsonPropertyName("on")] public bool? On { get; set; }
+}
+
+/// <summary>A worktree in a repo's overlap group.</summary>
+public sealed class TreeInfo
+{
+    [JsonPropertyName("path")] public string Path { get; set; } = "";
+    [JsonPropertyName("branch")] public string Branch { get; set; } = "";
+    /// <summary>"home", "worktree" (found by git worktree list) or "added" (registered by path)</summary>
+    [JsonPropertyName("kind")] public string Kind { get; set; } = "";
+    /// <summary>paths this tree changes relative to where it left the home tree's history</summary>
+    [JsonPropertyName("touched")] public int Touched { get; set; }
+}
+
+public sealed class BridgeInfo
+{
+    [JsonPropertyName("repo")] public string Repo { get; set; } = "";
+    [JsonPropertyName("interval")] public long Interval { get; set; }
+    [JsonPropertyName("last_fetch")] public string? LastFetch { get; set; }
+    [JsonPropertyName("last_ok")] public string? LastOk { get; set; }
+    [JsonPropertyName("last_error")] public string? LastError { get; set; }
+    [JsonPropertyName("refs")] public int Refs { get; set; }
 }
 
 public sealed class Hit
@@ -81,6 +108,8 @@ public sealed class Response
     [JsonPropertyName("entry")] public Entry? Entry { get; set; }
     [JsonPropertyName("version")] public string? Version { get; set; }
     [JsonPropertyName("hits")] public List<Hit>? Hits { get; set; }
+    [JsonPropertyName("trees")] public List<TreeInfo>? Trees { get; set; }
+    [JsonPropertyName("bridge")] public BridgeInfo? Bridge { get; set; }
 
     public static Response Fail(string error) => new() { Ok = false, Error = error };
 }
@@ -91,6 +120,8 @@ public sealed class Response
 [JsonSerializable(typeof(Request))]
 [JsonSerializable(typeof(Response))]
 [JsonSerializable(typeof(Hit))]
+[JsonSerializable(typeof(TreeInfo))]
+[JsonSerializable(typeof(BridgeInfo))]
 [JsonSerializable(typeof(string))]
 [JsonSerializable(typeof(Dictionary<string, JsonElement>))]
 public partial class Json : JsonSerializerContext
@@ -108,7 +139,7 @@ public partial class Json : JsonSerializerContext
         var copy = new Entry
         {
             Ts = e.Ts, Id = e.Id, Type = e.Type, Session = e.Session, Agent = e.Agent, Text = e.Text,
-            Ref = e.Ref, Wt = e.Wt, Glob = e.Glob, Expires = e.Expires, Nonce = e.Nonce,
+            Ref = e.Ref, Wt = e.Wt, Glob = e.Glob, Expires = e.Expires, Nonce = e.Nonce, Branch = e.Branch, Sha = e.Sha,
         };
         return JsonSerializer.Serialize(copy, Wire.Entry);
     }
