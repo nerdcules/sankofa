@@ -1,0 +1,8 @@
+#!/bin/sh
+# timed-gate: the edit gate on the hook payload from stdin, timed inside the box so the
+# docker exec around it is not counted. Prints the microseconds, then the gate's answer.
+t0=$(date +%s%N)
+out=$(sankofad gate claude-code)
+t1=$(date +%s%N)
+echo $(( (t1 - t0) / 1000 ))
+printf '%s\n' "$out"

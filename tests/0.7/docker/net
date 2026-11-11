@@ -1,0 +1,13 @@
+#!/bin/sh
+# net up|blackhole (as root, needs NET_ADMIN): blackhole drops every packet in and out of the
+# box except loopback, so connections stay open and nothing comes back (a dead route, or a
+# laptop with its lid shut: no reset, just silence). up removes the rule.
+set -eu
+nft delete table inet sksim 2>/dev/null || :
+[ "${1:-}" = blackhole ] || exit 0
+nft -f - <<'EOF'
+table inet sksim {
+  chain in  { type filter hook input  priority -10; iifname != "lo" drop; }
+  chain out { type filter hook output priority -10; oifname != "lo" drop; }
+}
+EOF
