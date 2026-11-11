@@ -28,14 +28,21 @@ screen() { $TM capture-pane -p; }
 shows() { i=0; until screen | grep -qF -- "$1"; do i=$((i + 1)); [ $i -lt 60 ] || { screen >&2; fail "$2"; }; sleep 0.05; done; }
 trap '$TM kill-server 2>/dev/null; on_exit' EXIT
 $TM new-session -d -x 120 -y 32 "env SANKOFA_CLI=$S SANKOFA_SOCKET=$SANKOFA_SOCKET XDG_CONFIG_HOME=$XDG_CONFIG_HOME $TUI; echo EXIT=\$?; sleep 30"
+shows "go back and fetch it" "the sankofa first"
 shows "Waiting on you (1)" "the waiting panel"
 shows "Open (1)" "the open panel"
 shows "approve the schema change" "the awaiting item"
 shows "F1  Help" "the status line"
 shows "File  Repo  Item  View  Help" "the menu bar"
+shows "live  1 repo  2 events" "the live line"
+colour() { $TM capture-pane -p -e | grep -F -- "$1" | head -n1; }
+lit() { colour "$1" | grep -qE '\[([0-9];)*7m'; }   # reverse video, alone or with bold
+! lit "write the migration" || fail "a row there at start is not lit up"
 
 "$S" todo "and the rollback" >/dev/null
 shows "Open (2)" "a new todo appears without asking"
+lit "and the rollback" || fail "a new row is lit up"
+i=0; while lit "and the rollback"; do i=$((i + 1)); [ $i -lt 200 ] || fail "and fades"; sleep 0.05; done
 
 $TM send-keys d; shows "How was it resolved?" "d asks how"
 $TM send-keys -l "approved on the call"; $TM send-keys Enter

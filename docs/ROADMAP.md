@@ -274,6 +274,13 @@ dashboard and the daemon share the event types; the Qt dashboard keeps its
 own C++ copy. A dialog with a fixed height let its button row hide the text
 field (found driving it in tmux), so dialogs size themselves.
 
+0.10.2: colour and motion. Rows take the colour of their kind and panels an
+accent of their own (the 16 ANSI colours, so the terminal's theme decides the
+shades); a row that just arrived shows in reverse, then bold, then plain over
+six seconds while its panel's border flashes; a live line counts repos and
+events and ages the last one. The sankofa bird, drawn in half blocks from the
+Adinkra silhouette, fades in from dark to gold at start and sits in About.
+
 ## Later / maybe
 
 - Test runner subscriber (run on `done`, write `tests` event).
