@@ -28,6 +28,7 @@ public sealed partial class Store
     public Entry Record(string repo, Entry e)
     {
         if (!DaemonTypes.Contains(e.Type)) throw new SankofaException($"cannot record type '{e.Type}'");
+        if (RecordElsewhere is { } fwd && Replicated(RepoKey(repo))) return fwd(RepoKey(repo), e);
         lock (gate)
         {
             repo = RepoKey(repo);
@@ -166,6 +167,12 @@ public sealed partial class Store
     /// <summary>Replace the remembered refs with what was just seen, and record the landings found, in one step.</summary>
     public List<Entry> RemoteRefsSeen(string repo, Dictionary<string, string> refs, IEnumerable<Entry> landed)
     {
+        if (RecordElsewhere is { } fwd && Replicated(RepoKey(repo)))
+        {
+            var sent = landed.Select(e => fwd(RepoKey(repo), e)).ToList();
+            SaveRefs(RepoKey(repo), refs);
+            return sent;
+        }
         lock (gate)
         {
             repo = RepoKey(repo);
@@ -175,6 +182,15 @@ public sealed partial class Store
                 .Where(e => db.Scalar("SELECT sha FROM events WHERE repo=? AND type='landed' AND branch=? ORDER BY seq DESC LIMIT 1",
                                       repo, e.Branch) as string != e.Sha)
                 .Select(e => { e.Session = "sankofad"; e.Agent = "sankofad"; return AppendLocked(repo, e); }).ToList();
+            SaveRefs(repo, refs);
+            return written;
+        }
+    }
+
+    void SaveRefs(string repo, Dictionary<string, string> refs)
+    {
+        lock (gate)
+        {
             db.Exec("BEGIN IMMEDIATE");
             try
             {
@@ -184,7 +200,6 @@ public sealed partial class Store
                 db.Exec("COMMIT");
             }
             catch { db.Exec("ROLLBACK"); throw; }
-            return written;
         }
     }
 }

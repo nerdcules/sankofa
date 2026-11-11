@@ -2,7 +2,7 @@
 # Build:   cd packaging/arch && makepkg -si
 # Local:   SANKOFA_SRC="git+file://$PWD/../..#branch=main" makepkg -si   (unreleased tree)
 pkgname=sankofa
-pkgver=0.6.0
+pkgver=0.7.0
 pkgrel=1
 pkgdesc="Handoff ledger and path leases for many AI coding sessions on one codebase"
 arch=('x86_64')
@@ -19,6 +19,7 @@ build() {
   export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
   dotnet publish daemon/sankofad -c Release -r linux-x64 -o out --nologo -v quiet
   dotnet publish daemon/sankofa-mcp -c Release -r linux-x64 -o out --nologo -v quiet
+  dotnet publish daemon/sankofa-hub -c Release -r linux-x64 -o out --nologo -v quiet
 }
 
 check() {
@@ -30,6 +31,7 @@ package() {
   cd sankofa
   install -Dm755 out/sankofad "$pkgdir/usr/bin/sankofad"
   install -Dm755 out/sankofa-mcp "$pkgdir/usr/bin/sankofa-mcp"
+  install -Dm755 out/sankofa-hub "$pkgdir/usr/bin/sankofa-hub"
   install -Dm755 bin/sankofa "$pkgdir/usr/bin/sankofa"
   install -Dm755 bin/sankofa-watch "$pkgdir/usr/bin/sankofa-watch"
   install -Dm755 hooks/git-pre-commit "$pkgdir/usr/share/sankofa/hooks/git-pre-commit"
@@ -40,6 +42,9 @@ package() {
   for u in sankofad.service sankofa-watch.service; do
     sed 's|@BIN@|/usr/bin|g' "systemd/$u" | install -Dm644 /dev/stdin "$pkgdir/usr/lib/systemd/user/$u"
   done
+  # the hub (on the always-on box): edit the address, then systemctl --user enable --now sankofa-hub
+  sed 's|@BIN@|/usr/bin|g; s|@LISTEN@|http://127.0.0.1:8787/|g' systemd/sankofa-hub.service \
+    | install -Dm644 /dev/stdin "$pkgdir/usr/lib/systemd/user/sankofa-hub.service"
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
   install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
   install -Dm644 AGENTS.md "$pkgdir/usr/share/doc/$pkgname/AGENTS.md"

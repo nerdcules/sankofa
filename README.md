@@ -32,12 +32,13 @@ sankofad ── SQLite, append-only events, leases with expiry
 
 ## Status
 
-Iteration 0.6: shell ledger, Stop hooks, desktop toasts for items that need
+Iteration 0.7: shell ledger, Stop hooks, desktop toasts for items that need
 you, `sankofad` (an SQLite event log and path leases), the gates (every edit
 is leased before it happens; git refuses commits on someone else's paths), an
 MCP server so any MCP client can use the ledger without a shell, and detection
 where prevention is not possible: two worktrees changing one path, and work
-that landed on a remote while you were away. See `docs/ROADMAP.md` for what comes next. Each iteration ships with
+that landed on a remote while you were away. A hub shares one ledger and one
+lease table between your machines, and with cloud sessions over MCP. See `docs/ROADMAP.md` for what comes next. Each iteration ships with
 tests, and its usage gate is run as an accelerated simulation (`sim/`) against
 the real code before the next starts.
 
@@ -188,6 +189,49 @@ sankofa watch add       # toast awaiting, overlap and landed events on the deskt
 Both are daemon-only: with `sankofad` down, nothing is watched or fetched, and
 the bridge catches up when it returns.
 
+## Hub: one ledger for every device
+
+On an always-on box reachable over a private network (Tailscale, WireGuard;
+the hub speaks plain HTTP and relies on that network for encryption):
+
+```sh
+SANKOFA_HUB_LISTEN=http://100.64.0.7:8787/ ./install.sh --hub   # sankofa-hub.service
+sankofad hub token add desk          # prints a token once; only its hash is kept
+sankofad hub token add laptop
+sankofad hub token add cloud         # for sessions that reach the hub over MCP
+```
+
+On each device, then in each repo:
+
+```sh
+sankofa hub join http://100.64.0.7:8787 <token> desk
+sankofa hub on                       # the repo's hub name defaults to its git remote
+sankofa hub                          # online / offline, writes queued
+```
+
+The first device to attach a repo seeds the hub with its ledger; later
+devices start from the hub's (their own is kept in
+`.sankofa/ledger.pre-hub.jsonl`). From then on `sankofad` forwards that
+repo's verbs to the hub, and `.sankofa/ledger.jsonl` is a replica kept
+current by a live event stream, so the hooks, the watcher and `sankofa last`
+work as before. Every event records its `device` (from the token) and
+`client` (`cli`, `gate:claude-code`, `mcp:<name>`), and a denied claim names
+the device that holds the path.
+
+Offline, writes are allowed and queued in the replica with ids of their own
+(`q...`); the edit gate allows and queues too. When the hub answers again the
+queue is sent in order: refs follow the new ids, a queued claim on a path
+another device held meanwhile is recorded as contention plus a flag, and the
+replica's tail is replaced by the hub's copy. Reads that need the hub
+(`leases`, the commit gate) fail while it is down; commits stay gated. A
+revoked or unknown token is refused (401) and logged by the hub; nothing is
+queued for it.
+
+A client that cannot run `sankofad`, like a cloud session, speaks MCP to the
+hub directly: `POST http://<hub>/mcp` with `Authorization: Bearer <token>`.
+Its tools are the same as `sankofad mcp`'s, each with a `repo` argument (the
+hub name). A cloud routine that records its work there needs no bridge.
+
 ## Simulations
 
 ```sh
@@ -198,6 +242,7 @@ python3 sim/gates.py    # agents editing one repo at once: clobbers with and wit
 python3 sim/mcp.py      # Claude Code and Codex MCP clients on one ledger, daemon killed mid-run
 python3 sim/overlap.py  # agents in several worktrees: overlaps missed, false, or reported twice
 python3 sim/overnight.py # routines pushing overnight while the laptop sleeps: one landed and one toast each
+python3 sim/hub.py      # desk, laptop and a cloud session on one hub, with cuts, dead routes and restarts
 ```
 
 Each drives the real CLI, hook, watcher, and daemon with synthetic sessions.

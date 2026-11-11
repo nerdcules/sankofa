@@ -6,7 +6,7 @@
 # POSIX sh + jq.
 set -eu
 
-VERSION=0.6.0
+VERSION=0.7.0
 
 usage() {
   cat <<'USAGE'
@@ -40,6 +40,11 @@ usage: sankofa <command> [args]
                        event for each remote branch that moved and is not your own push
   bridge fetch         fetch now (prints any landed events)
   bridge [status]|off
+  hub join <url> <token> [device]   connect this device to a hub (writes hub.conf)
+  hub on [name]        share this repo's ledger through the hub (name: default from the
+                       git remote, like github.com/you/repo; use the same name on every device)
+  hub off              stop; the replica is kept as .sankofa/ledger.hub.jsonl
+  hub [status]         online / offline, the hub name, writes queued while offline
   watch add [dir]      toast this repo's awaiting, overlap and landed events (sankofa-watch)
   watch list           show watched repos
   watch rm [dir]       stop watching a repo
@@ -98,7 +103,18 @@ wt_fp() {
 }
 session_id() { printf '%s' "${CLAUDE_CODE_SESSION_ID:-${CLAUDE_SESSION_ID:-${SANKOFA_SESSION:--}}}"; }
 agent_name() { printf '%s' "${SANKOFA_AGENT:-main}"; }
-next_id() { printf 'e%s' "$(( $(wc -l < "$LEDGER") + 1 ))"; }
+# In a repo attached to a hub the ledger is the hub's replica: lines written here without the
+# daemon are queued for the hub and get ids of their own (q...), which the hub maps on return.
+next_id() {
+  if [ -n "$(cfg hub_repo "")" ]; then printf 'q%s%s' "$(date +%s%3N)" "$(( $$ % 1000 ))"
+  else printf 'e%s' "$(( $(wc -l < "$LEDGER") + 1 ))"; fi
+}
+client_name() { printf '%s' "${SANKOFA_CLIENT:-cli}"; }
+hub_conf() { printf '%s' "${SANKOFA_HUB_CONF:-${XDG_CONFIG_HOME:-$HOME/.config}/sankofa/hub.conf}"; }
+this_device() {
+  d=$(grep -E '^device=' "$(hub_conf)" 2>/dev/null | tail -n1 | cut -d= -f2-)
+  printf '%s' "${d:-$(uname -n)}"
+}
 
 # --- sankofad -------------------------------------------------------------------
 sock_path() {
@@ -155,7 +171,8 @@ append() {
   wt=$(wt_fp); nonce=$(new_nonce)
   req=$(jq -nc --arg repo "$ROOT" --arg type "$1" --arg text "$2" --arg ref "${3:-}" \
     --arg session "${4:-$(session_id)}" --arg agent "${5:-$(agent_name)}" --arg wt "$wt" --arg nonce "$nonce" \
-    '{verb:"append",repo:$repo,type:$type,text:$text,session:$session,agent:$agent,nonce:$nonce}
+    --arg client "$(client_name)" \
+    '{verb:"append",repo:$repo,type:$type,text:$text,session:$session,agent:$agent,nonce:$nonce,client:$client}
      + (if $ref != "" then {ref:$ref} else {} end) + (if $wt != "-" then {wt:$wt} else {} end)')
   dcall "$req"
   case $DRC in
@@ -193,7 +210,7 @@ open_items() { # id \t type \t ts \t text
     | [.id, .type, .ts, .text] | @tsv' "$LEDGER"
 }
 
-render() { jq -r '"\(.ts)  \(.id)  \(.type)\t[\(.agent)]  \(.text)\(if .ref then "  (\(.ref))" else "" end)"'; }
+render() { jq -r '"\(.ts)  \(.id)  \(.type)\t[\(.agent)\(if .device then "@\(.device)" else "" end)]  \(.text)\(if .ref then "  (\(.ref))" else "" end)"'; }
 
 item_exists() { jq -e --arg id "$1" 'select(.id==$id and (.type=="todo" or .type=="awaiting" or .type=="claim"))' "$LEDGER" >/dev/null 2>&1; }
 # a claim with no done yet (whether it is still live is the daemon's call; it applies the done on import)
@@ -217,8 +234,8 @@ cmd_done() {
   id=$1; shift
   nonce=$(new_nonce)
   dcall "$(jq -nc --arg repo "$ROOT" --arg ref "$id" --arg text "${*:-resolved}" --arg session "$(session_id)" \
-            --arg agent "$(agent_name)" --arg nonce "$nonce" \
-            '{verb:"done",repo:$repo,ref:$ref,text:$text,session:$session,agent:$agent,nonce:$nonce}')"
+            --arg agent "$(agent_name)" --arg nonce "$nonce" --arg client "$(client_name)" \
+            '{verb:"done",repo:$repo,ref:$ref,text:$text,session:$session,agent:$agent,nonce:$nonce,client:$client}')"
   case $DRC in
     0) return 0 ;;
     4) [ -n "$(nonce_id "$nonce")" ] && return 0 ;;
@@ -240,15 +257,15 @@ cmd_open() {
   printf '%s\n' "$out" | awk -F'\t' '{ printf "%-5s %-9s %s  %s\n", $1, $2, $3, $4 }'
 }
 
-fmt_lease() { jq -r '"\(.id)\t\(.state)\(if .dirty then ",dirty" else "" end)\t\(.glob)\t\(.session) [\(.agent)]\tuntil \(.expires)"'; }
+fmt_lease() { jq -r '"\(.id)\t\(.state)\(if .dirty then ",dirty" else "" end)\t\(.glob)\t\(.session) [\(.agent)]\(if .device then "@\(.device)" else "" end)\tuntil \(.expires)"'; }
 
 cmd_claim() {
   [ $# -ge 1 ] || die "claim needs a glob"
   need_root
   g=$(repo_rel "$1"); ttl=$(ttl_secs "${2:-30m}")
   dcall "$(jq -nc --arg repo "$ROOT" --arg glob "$g" --argjson ttl "$ttl" --arg session "$(session_id)" \
-            --arg agent "$(agent_name)" --arg wt "$(wt_fp)" \
-            '{verb:"claim",repo:$repo,glob:$glob,ttl:$ttl,session:$session,agent:$agent}
+            --arg agent "$(agent_name)" --arg wt "$(wt_fp)" --arg client "$(client_name)" \
+            '{verb:"claim",repo:$repo,glob:$glob,ttl:$ttl,session:$session,agent:$agent,client:$client}
              + (if $wt != "-" then {wt:$wt} else {} end)')"
   case $DRC in
     3) local_append flag "claim on $g not recorded: sankofad unreachable" >/dev/null
@@ -259,11 +276,12 @@ cmd_claim() {
   esac
   if [ "$(printf '%s' "$DOUT" | jq -r .granted)" = true ]; then
     verb=held; [ "$(printf '%s' "$DOUT" | jq -r .renewed)" = true ] && verb=renewed
+    [ "$(printf '%s' "$DOUT" | jq -r '.state // ""')" = queued ] && verb="allowed (hub unreachable; queued, not leased)"
     printf '%s' "$DOUT" | jq -r --arg v "$verb" '.lease | "\(.id)  \($v)  \(.glob)  until \(.expires)"'
     printf '%s' "$DOUT" | jq -r '.warnings[]? | "warning: \(.id) on \(.glob) by \(.session) [\(.agent)] ended \(.state) without done; its last edit is unconfirmed"' >&2
   else
     printf 'denied: %s overlaps\n' "$g" >&2
-    printf '%s' "$DOUT" | jq -r '.conflicts[] | "  \(.id)  \(.glob)  held by \(.session) [\(.agent)] until \(.expires)"' >&2
+    printf '%s' "$DOUT" | jq -r '.conflicts[] | "  \(.id)  \(.glob)  held by \(.session) [\(.agent)]\(if .device then " on \(.device)" else "" end) until \(.expires)"' >&2
     exit 2
   fi
 }
@@ -283,7 +301,7 @@ cmd_ask() {
   dcall "$(jq -nc --arg repo "$ROOT" --arg path "$p" '{verb:"ask",repo:$repo,path:$path}')"
   case $DRC in 0) ;; 3) echo "unknown  $p  (sankofad unreachable)"; return 0 ;; *) die "$(derr)" ;; esac
   printf '%s' "$DOUT" | jq -r --arg p "$p" '
-    if .state == "held" then "held  \($p)  \(.lease.id) \(.lease.glob) by \(.lease.session) [\(.lease.agent)] until \(.lease.expires)"
+    if .state == "held" then "held  \($p)  \(.lease.id) \(.lease.glob) by \(.lease.session) [\(.lease.agent)]\(if .lease.device then " on \(.lease.device)" else "" end) until \(.lease.expires)"
     else "free  \($p)" end,
     (.warnings[]? | "dirty  \(.id) \(.glob) by \(.session) [\(.agent)] ended \(.state) without done")'
 }
@@ -369,10 +387,11 @@ cmd_hook() {
     if [ "$require" = 1 ] && [ "$active" != true ] && [ "$nopen" -gt 0 ]; then
       # Baseline: this session's last ledger write. Before its first write, the tree as the
       # ledger last saw it before this session showed up, and every transcript edit counts.
-      base=$(jq -rs --arg s "$session" '
+      # through a hub, only this device's fingerprints describe this device's working tree
+      base=$(jq -rs --arg s "$session" --arg dev "$(this_device)" '
         (map(select(.session==$s and (.type|IN("note","todo","awaiting","done")))) | last) as $w
         | ((map(.session==$s) | index(true)) // length) as $i
-        | (.[:$i] | map(select(.wt)) | last) as $pre
+        | (.[:$i] | map(select(.wt and ((.device // $dev) == $dev))) | last) as $pre
         | if $w then [$w.ts, ($w.wt // "-")]
           else ["", ($pre.wt // "-")] end | @tsv' "$LEDGER")
       since=$(printf '%s' "$base" | cut -f1); base_wt=$(printf '%s' "$base" | cut -f2)
@@ -505,6 +524,68 @@ cmd_bridge() {
   esac
 }
 
+set_cfg() { # set_cfg key value (empty value: remove the key)
+  tmp=$CONFIG.tmp.$$
+  { [ -f "$CONFIG" ] && grep -vE "^$1=" "$CONFIG" || :; [ -n "$2" ] && printf '%s=%s\n' "$1" "$2"; } > "$tmp"
+  mv "$tmp" "$CONFIG"
+}
+
+# a repo's name on the hub: its git remote without scheme, user, port and .git
+repo_name() {
+  u=$(git -C "$ROOT" remote get-url origin 2>/dev/null || :)
+  if [ -z "$u" ]; then basename "$ROOT"; return 0; fi
+  printf '%s' "$u" | sed -E 's#^[a-z+]+://##; s#^[^@/]+@##; s#^([^/:]+):([^0-9/])#\1/\2#; s#:[0-9]+/#/#; s#\.git/?$##; s#/+$##; s#^/+##; s#[^A-Za-z0-9._/-]#-#g'
+}
+
+cmd_hub() {
+  sub=${1:-status}; [ $# -gt 0 ] && shift
+  case $sub in
+    join)
+      [ $# -ge 2 ] || die "hub join <url> <token> [device]"
+      url=${1%/}; token=$2; dev=${3:-$(uname -n)}
+      conf=$(hub_conf); mkdir -p "$(dirname "$conf")"
+      ( umask 077; printf 'url=%s\ntoken=%s\ndevice=%s\n' "$url" "$token" "$dev" > "$conf" )
+      if command -v curl >/dev/null 2>&1; then
+        code=$(curl -s -o /dev/null -w '%{http_code}' -m 5 -H "Authorization: Bearer $token" \
+               -H 'Content-Type: application/json' -d '{"verb":"ping"}' "$url/v1/rpc" || :)
+        case $code in
+          200) echo "sankofa: joined $url as $dev" ;;
+          401) die "the hub at $url refused that token (saved anyway in $conf)" ;;
+          *)   echo "sankofa: saved $conf; the hub at $url did not answer ($code); writes queue until it does" ;;
+        esac
+      else echo "sankofa: saved $conf (install curl to check the hub now)"; fi ;;
+    on)
+      need_root
+      [ -f "$(hub_conf)" ] || die "this device has no hub yet: sankofa hub join <url> <token>"
+      name=${1:-$(cfg hub_repo "")}; [ -n "$name" ] || name=$(repo_name)
+      set_cfg hub_repo "$name"
+      dcall "$(jq -nc --arg repo "$ROOT" '{verb:"hub-attach",repo:$repo}')"
+      case $DRC in
+        0) st=$(printf '%s' "$DOUT" | jq -r .state)
+           case $st in
+             seeded) echo "sankofa: $ROOT is $name on the hub; this device's ledger became its first events" ;;
+             joined) echo "sankofa: $ROOT is $name on the hub; the ledger is now the hub's (yours is kept in .sankofa/ledger.pre-hub.jsonl)" ;;
+             *)      echo "sankofa: $ROOT is $name on the hub ($st)" ;;
+           esac ;;
+        3) set_cfg hub_repo ""; die "sankofad unreachable at $(sock_path); hub on needs it" ;;
+        *) set_cfg hub_repo ""; die "$(derr)" ;;
+      esac ;;
+    off)
+      need_root
+      dneed "$(jq -nc --arg repo "$ROOT" '{verb:"hub-detach",repo:$repo}')"
+      set_cfg hub_repo ""
+      echo "sankofa: $ROOT is local again; the hub replica is kept in .sankofa/ledger.hub.jsonl" ;;
+    status)
+      need_root
+      dneed "$(jq -nc --arg repo "$ROOT" '{verb:"hub-status",repo:$repo}')"
+      printf '%s' "$DOUT" | jq -r '
+        if .state == "off" then "hub off" + (if .url then " (this device: \(.device) on \(.url))" else "" end)
+        else "hub \(.state)  \(.id) on \(.url) as \(.device), at event \(.cursor)"
+          + (if (.queued // 0) > 0 then ", \(.queued) bytes queued for the hub" else "" end) end' ;;
+    *) die "hub join <url> <token> [device] | on [name] | off | status" ;;
+  esac
+}
+
 cmd_watch() {
   REG=$(watch_reg); mkdir -p "$(dirname "$REG")"; [ -f "$REG" ] || : > "$REG"
   sub=${1:-list}; [ $# -gt 0 ] && shift
@@ -552,6 +633,7 @@ main() {
     watch)     cmd_watch "$@" ;;
     trees)     cmd_trees "$@" ;;
     bridge)    cmd_bridge "$@" ;;
+    hub)       cmd_hub "$@" ;;
     version|-V|--version) echo "sankofa $VERSION" ;;
     ""|help|-h|--help) usage ;;
     *) die "unknown command '$cmd' (try: sankofa help)" ;;

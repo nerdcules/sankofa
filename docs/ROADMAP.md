@@ -152,6 +152,27 @@ allow-and-flag.
 Tests: two clients against one hub, lease contention honored; hub down, local
 allow-and-flag, reconciliation on return.
 
+Outcome (0.7.0): `sankofa-hub` (also `sankofad hub`) serves the socket
+protocol as JSON over HTTP, a live event stream, and MCP streamable HTTP, with
+device tokens (hashes only). A device's `sankofad` forwards an attached repo's
+verbs to the hub and keeps `.sankofa/ledger.jsonl` as a replica, so hooks and
+the watcher are unchanged. Offline writes are queued in the replica (`q...`
+ids) and replayed in order on return; the hub maps the ids, dedupes by nonce,
+and turns a queued claim on a path someone else held into contention plus a
+flag. The hub is a separate binary and the device side uses a small HTTP
+client of its own: HttpClient doubled `sankofad` and slowed the gate from 3.5
+to 4.4 ms. `sim/hub.py` ran 5 simulated weeks of desk, laptop and a cloud MCP
+session through proxies that cut or silently blackhole the network, with hub
+restarts and a killed laptop daemon: 1749 acknowledged writes, 242 of them
+offline, none lost or doubled, replicas identical to the hub at the end, and
+all 382 replayed claims on held paths flagged. It found a queued `done` whose
+todo had gone up in an earlier reconcile being refused (ids are now mapped
+across batches), and edit-gate claims waiting behind a slow reconcile (the gate
+now has its own connection and never waits for one). Edit gate through the
+hub on one machine: median 5.0 ms, p99 7 ms; offline, median 4.3 ms. Exit
+still open: desktop and laptop sharing one ledger for a week needs the second
+machine and a hub on the private network.
+
 ## 0.8 · dashboard (optional)
 
 Deliver: Omarchy-style Qt app or a TUI subscribing to `events --follow`.

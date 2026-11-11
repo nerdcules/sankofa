@@ -69,6 +69,7 @@ static class Mcp
         foreach (var a in args) psi.ArgumentList.Add(a);
         if (client is not null && string.IsNullOrEmpty(Environment.GetEnvironmentVariable("SANKOFA_AGENT")))
             psi.Environment["SANKOFA_AGENT"] = $"mcp:{client}";
+        if (client is not null) psi.Environment["SANKOFA_CLIENT"] = $"mcp:{client}";
         using var p = Process.Start(psi)!;
         var o = p.StandardOutput.ReadToEndAsync();
         var e = p.StandardError.ReadToEnd();

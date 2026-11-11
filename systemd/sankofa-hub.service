@@ -1,0 +1,14 @@
+[Unit]
+Description=sankofa hub: one ledger and lease table for many devices, over HTTP
+Documentation=https://github.com/nerdcules/sankofa
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Listen on the private network's address only (Tailscale, WireGuard); the hub speaks plain HTTP.
+ExecStart=@BIN@/sankofa-hub serve --listen @LISTEN@
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target
