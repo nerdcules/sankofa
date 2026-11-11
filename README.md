@@ -273,7 +273,12 @@ hub name). A cloud routine that records its work there needs no bridge.
 `sankofa dash` opens `sankofa-tui`, the dashboard in the terminal, in the
 Turbo Vision manner: a menu bar (File, Repo, Item, View, Help), tiled panels
 and a status line. It runs anywhere sankofa does, over SSH too, in the
-terminal's own colours.
+terminal's own colours: each panel and each kind of row has one (red waits on
+you, magenta is a handoff, green is held, amber may be half-finished, cyan
+landed). Something new lights up and fades over a few seconds, its panel's
+border flashes, and the top right shows the dashboard following live: repos,
+events, and how long since the last. It opens with the sankofa (any key skips
+it; `SANKOFA_TUI_SPLASH=0` turns it off).
 
 ```
  File  Repo  Item  View  Help

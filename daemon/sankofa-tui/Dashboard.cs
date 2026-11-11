@@ -24,7 +24,25 @@ sealed class Dashboard(Board board, BoardFiles files, Func<IEnumerable<string>> 
         public List<object> Rows = [];
         public readonly ObservableCollection<string> Lines = [];
         public object? Selected => List.SelectedItem is int i && i >= 0 && i < Rows.Count ? Rows[i] : null;
+        /// <summary>Until when the border shows that something new arrived.</summary>
+        public DateTime FlashUntil;
     }
+
+    /// <summary>When each row was first seen, so a new one stands out for a few seconds.</summary>
+    readonly Dictionary<string, DateTime> firstSeen = [];
+    bool started;           // rows already there at start are not new
+    Label live = null!;
+    int tick;
+    static readonly TimeSpan Fresh = TimeSpan.FromSeconds(6), FlashFor = TimeSpan.FromSeconds(3);
+
+    static string RowKey(object row) => row switch
+    {
+        Board.Item i => $"i {i.Repo} {i.Id}",
+        Board.LeaseRow l => $"l {l.Repo} {l.Id} {l.State}",
+        Board.Word w => $"w {w.Repo} {w.Session} {w.Ts}",
+        Board.Alert a => $"a {a.Repo} {a.Id}",
+        _ => "",
+    };
 
     IApplication app = null!;
     readonly List<Panel> panels = [];
@@ -39,11 +57,14 @@ sealed class Dashboard(Board board, BoardFiles files, Func<IEnumerable<string>> 
         using var a = Application.Create();
         app = a;
         app.Init();
+        if (Environment.GetEnvironmentVariable("SANKOFA_TUI_SPLASH") != "0") Splash();
         using (top = new Window { Title = Title(), BorderStyle = LineStyle.None })
         {
             Build();
             Refresh();
-            app.AddTimeout(TimeSpan.FromMilliseconds(500), () => { if (files.Poll()) Refresh(); else Retitle(); return true; });
+            started = true;
+            // the files every half second; ages, the live line and fading highlights every half second too
+            app.AddTimeout(TimeSpan.FromMilliseconds(500), () => { files.Poll(); Refresh(); Pulse(); return true; });
             if (Environment.GetEnvironmentVariable("SANKOFA_TUI_EXIT_AFTER") is { } ms && int.TryParse(ms, out var n))
                 app.AddTimeout(TimeSpan.FromMilliseconds(n), () => { app.RequestStop(); return false; });
             app.Run(top);
@@ -83,6 +104,8 @@ sealed class Dashboard(Board board, BoardFiles files, Func<IEnumerable<string>> 
                 new MenuItem("_About sankofa", "", About),
             ]),
         ]);
+        // top right: the dashboard is following, how much, and how long since anything happened
+        live = new Label { X = Pos.AnchorEnd(), Y = 0, Text = "" };
         var status = new StatusBar([
             new Shortcut(Key.F1, "Help", Keys),
             new Shortcut(Key.Enter, "Open", null),
@@ -91,7 +114,7 @@ sealed class Dashboard(Board board, BoardFiles files, Func<IEnumerable<string>> 
             new Shortcut(Key.F9, "Menu", null),
             new Shortcut(Key.X.WithAlt, "Quit", () => app.RequestStop()),
         ]);
-        top.Add(menu);
+        top.Add(menu, live);
         foreach (var p in panels) top.Add(p.Frame);
         top.Add(status);
         // the panel lists would take letters as type-to-search: these keys go first, but only on
@@ -129,6 +152,18 @@ sealed class Dashboard(Board board, BoardFiles files, Func<IEnumerable<string>> 
         frame.Add(list);
         var p = new Panel { Frame = frame, List = list, Title = title };
         list.SetSource(p.Lines);
+        frame.SetScheme(Palette.With(frame.GetScheme(), Palette.Accent(title)));
+        // each row in the colour of its kind; one that just arrived is lit up, then fades back
+        list.RowRender += (_, e) =>
+        {
+            if (e.Row < 0 || e.Row >= p.Rows.Count || (e.Row == list.SelectedItem && list.HasFocus)) return;
+            var row = p.Rows[e.Row];
+            var bg = list.GetScheme().Normal.Background;
+            var age = DateTime.UtcNow - firstSeen.GetValueOrDefault(RowKey(row), DateTime.MinValue);
+            e.RowAttribute = age < Fresh
+                ? Palette.On(Palette.Row(row), bg, age < Fresh / 2 ? TextStyle.Reverse | TextStyle.Bold : TextStyle.Bold)
+                : Palette.On(Palette.Row(row), bg);
+        };
         list.Accepting += (_, e) => { Details(p); e.Handled = true; };
         list.KeyDown += (_, k) =>
         {
@@ -164,13 +199,6 @@ sealed class Dashboard(Board board, BoardFiles files, Func<IEnumerable<string>> 
 
     Panel? Focused() => panels.FirstOrDefault(p => p.Frame.HasFocus) ?? (zoomed ?? waiting);
 
-    void Retitle()
-    {
-        // ages move on with no new events
-        snap = Snapshot.Of(board, repo, missing(), DateTimeOffset.UtcNow);
-        Fill(waiting, snap.Waiting.Cast<object>(), o => snap.Row((Board.Item)o));
-    }
-
     void Refresh()
     {
         snap = Snapshot.Of(board, repo, missing(), DateTimeOffset.UtcNow);
@@ -182,16 +210,68 @@ sealed class Dashboard(Board board, BoardFiles files, Func<IEnumerable<string>> 
         if (snap.Missing.Count > 0) alerts.Frame.Title = $"Alerts · missing ledger: {string.Join(", ", snap.Missing)}";
     }
 
-    static void Fill(Panel p, IEnumerable<object> rows, Func<object, string> line)
+    void Fill(Panel p, IEnumerable<object> rows, Func<object, string> line)
     {
         var keep = p.List.SelectedItem;
         p.Rows = rows.ToList();
+        var now = DateTime.UtcNow;
+        foreach (var r in p.Rows)
+            if (firstSeen.TryAdd(RowKey(r), started ? now : DateTime.MinValue) && started) p.FlashUntil = now + FlashFor;
         var lines = p.Rows.Select(line).ToList();
         p.Frame.Title = $"{p.Title} ({p.Rows.Count})";
+        p.List.SetNeedsDraw();   // the highlights fade with time, not only when the rows change
         if (lines.SequenceEqual(p.Lines)) return;
         p.Lines.Clear();
         foreach (var l in lines) p.Lines.Add(l);
         if (p.Rows.Count > 0) p.List.SelectedItem = Math.Clamp(keep ?? 0, 0, p.Rows.Count - 1);
+    }
+
+    /// <summary>Every half second: the live line's heartbeat, and borders lit while news is fresh.</summary>
+    void Pulse()
+    {
+        tick++;
+        var now = DateTime.UtcNow;
+        foreach (var p in panels)
+        {
+            var lit = now < p.FlashUntil && tick % 2 == 0;
+            p.Frame.SetScheme(Palette.With(p.Frame.GetScheme(), lit ? ColorName16.White : Palette.Accent(p.Title),
+                                           lit ? TextStyle.Bold : TextStyle.None));
+        }
+        var last = snap.Repos.Select(r => board.LastTs(r)).DefaultIfEmpty("").Max(StringComparer.Ordinal) ?? "";
+        var missingNow = snap.Missing.Count > 0;
+        var dot = missingNow ? "○" : tick % 2 == 0 ? "●" : "◉";
+        live.Text = $" {dot} {(missingNow ? "ledger missing" : "live")}  {snap.Repos.Count} repo{(snap.Repos.Count == 1 ? "" : "s")}" +
+                    $"  {board.Events(repo)} events  last {(last.Length > 0 ? snap.Ago(last) : "never")} ";
+        live.SetScheme(Palette.With(live.GetScheme(), missingNow ? ColorName16.BrightRed : tick % 2 == 0 ? ColorName16.BrightGreen : ColorName16.Green,
+                                    TextStyle.Bold));
+    }
+
+    /// <summary>The sankofa, brightening out of the dark, for a moment at start (any key skips it).</summary>
+    void Splash()
+    {
+        using var w = new Window { BorderStyle = LineStyle.None };
+        var lines = Art.Bird.Split('\n');
+        var bird = new Label { Text = Art.Bird, X = Pos.Center(), Y = Pos.Center() - 2, Width = lines.Max(l => l.Length), Height = lines.Length };
+        var motto = new Label { Text = Art.Motto, X = Pos.Center(), Y = Pos.Bottom(bird) + 1 };
+        w.Add(bird, motto);
+        ColorName16[] fade = [ColorName16.Black, ColorName16.DarkGray, ColorName16.Gray, ColorName16.Yellow, Palette.Gold];
+        var step = 0;
+        void Paint()
+        {
+            var c = fade[Math.Min(step, fade.Length - 1)];
+            bird.SetScheme(Palette.With(bird.GetScheme(), c, TextStyle.Bold));
+            motto.SetScheme(Palette.With(motto.GetScheme(), step >= fade.Length - 1 ? ColorName16.White : ColorName16.DarkGray));
+        }
+        Paint();
+        app.AddTimeout(TimeSpan.FromMilliseconds(110), () =>
+        {
+            step++;
+            if (step > fade.Length + 5) { app.RequestStop(w); return false; }   // hold the gold a moment
+            Paint();
+            return true;
+        });
+        w.KeyDown += (_, k) => { app.RequestStop(w); k.Handled = true; };
+        app.Run(w);
     }
 
     // ------------------------------------------------------------------ actions
@@ -343,5 +423,17 @@ sealed class Dashboard(Board board, BoardFiles files, Func<IEnumerable<string>> 
         q  Alt+X          quit
         """);
 
-    void About() => Plain("About sankofa", $"{Art.Heart}\n\n    {Art.Motto}\n    sankofa-tui {Store.Version}");
+    void About()
+    {
+        using var d = new Dialog { Title = "About sankofa", Width = Dim.Auto(), Height = Dim.Auto() };
+        var lines = Art.Bird.Split('\n');
+        var bird = new Label { Text = Art.Bird, X = 2, Y = 1, Width = lines.Max(l => l.Length), Height = lines.Length };
+        bird.SetScheme(Palette.With(bird.GetScheme(), Palette.Gold, TextStyle.Bold));
+        var text = new Label { Text = $"{Art.Motto}\nsankofa-tui {Store.Version}", X = 2, Y = Pos.Bottom(bird) + 1 };
+        var close = new Button { Text = "_Close", IsDefault = true };
+        close.Accepting += (_, e) => { app.RequestStop(d); e.Handled = true; };
+        d.Add(bird, text);
+        d.AddButton(close);
+        app.Run(d);
+    }
 }
