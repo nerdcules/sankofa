@@ -32,14 +32,15 @@ sankofad ── SQLite, append-only events, leases with expiry
 
 ## Status
 
-Iteration 0.8: shell ledger, Stop hooks, desktop toasts for items that need
+Iteration 0.9: shell ledger, Stop hooks, desktop toasts for items that need
 you, `sankofad` (an SQLite event log and path leases), the gates (every edit
 is leased before it happens; git refuses commits on someone else's paths), an
 MCP server so any MCP client can use the ledger without a shell, and detection
 where prevention is not possible: two worktrees changing one path, and work
 that landed on a remote while you were away. A hub shares one ledger and one
 lease table between your machines, and with cloud sessions over MCP. A
-dashboard (`sankofa dash`, `dashboard/`) shows all of it in one window. See `docs/ROADMAP.md` for what comes next. Each iteration ships with
+dashboard (`sankofa dash`, `dashboard/`) shows all of it in one window, and a
+handoff passes a branch with its context to a teammate. See `docs/ROADMAP.md` for what comes next. Each iteration ships with
 tests, and its usage gate is run as an accelerated simulation (`sim/`) against
 the real code before the next starts.
 
@@ -170,7 +171,7 @@ sankofa trees on        # watch this repo and every git worktree of it (found ag
 sankofa trees add ../other-clone
 sankofa trees           # the trees, their branches, how many paths each changed
 sankofa bridge on 5m    # fetch the remotes every 5 minutes
-sankofa watch add       # toast awaiting, overlap and landed events on the desktop
+sankofa watch add       # toast awaiting, handoff, overlap and landed events on the desktop
 ```
 
 - `overlap`: a path changed in two or more trees. A tree's changes count from
@@ -192,6 +193,33 @@ sankofa watch add       # toast awaiting, overlap and landed events on the deskt
 
 Both are daemon-only: with `sankofad` down, nothing is watched or fetched, and
 the bridge catches up when it returns.
+
+## Handing work to a teammate
+
+When you run out of credits (or time) mid-task, hand the branch over:
+
+```sh
+sankofa handoff "parser done; next: error messages"   # on your machine
+sankofa pickup                                         # on theirs
+```
+
+`handoff` refuses while tracked files have uncommitted changes (they would
+stay behind), pushes the branch, and writes a letter: your text, or the last
+agent reply when you give none, plus this repo's open items. The letter is a
+tag object pushed to `refs/sankofa/handoff/<branch>` on the same remote, so
+the teammate needs nothing but the git remote; it is also a `handoff` event
+in the ledger, an open item that a hub shares at once. No credentials or
+accounts change hands: the teammate's agent carries on under their own.
+
+`pickup` fetches, takes the one handoff on offer (or the branch or id you
+name), switches to the branch (creating it to track the remote, or
+fast-forwarding yours), prints the letter, and finishes the handoff. Without a
+hub the letter's open items become todos in the teammate's ledger. It then
+removes the ref from the remote, so nobody picks it up twice. The bridge
+(`sankofa bridge on`) also fetches handoff refs: a new one is recorded and
+toasted ("handed off to you", with the `pickup` line), never on the machine
+that sent it, and when the ref is gone from the remote the sender's open
+handoff is finished as picked up.
 
 ## Hub: one ledger for every device
 

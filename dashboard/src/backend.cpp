@@ -48,7 +48,7 @@ QVariantList Backend::repos() const
     const auto all = m_ledger->repos();
     for (const auto &r : all)
         out << QVariantMap{{"key", r}, {"name", shortName(r, all)},
-                           {"waiting", int(m_ledger->openItems(r, "awaiting").size())}};
+                           {"waiting", int(m_ledger->openItems(r, "awaiting").size() + m_ledger->openItems(r, "handoff").size())}};
     return out;
 }
 
@@ -121,10 +121,11 @@ void Backend::rebuild()
         for (const auto &it : m_ledger->openItems(repo, type))
             out << QVariantMap{{"id", it.id}, {"type", it.type}, {"text", it.text}, {"ts", it.ts},
                                {"repo", shortName(it.repo, all)}, {"who", who(it.session, it.agent, it.device)},
-                               {"command", QString("sankofa done %1").arg(it.id)}};
+                               {"command", QString(it.type == "handoff" ? "sankofa pickup %1" : "sankofa done %1").arg(it.id)}};
         return out;
     };
-    m_waiting = items("awaiting");
+    // a handoff waits on whoever picks it up, like an awaiting item waits on the human
+    m_waiting = items("awaiting") + items("handoff");
     m_todos = items("todo");
 
     m_leases.clear();

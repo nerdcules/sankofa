@@ -216,6 +216,26 @@ through a hub only the device that held the lease settles it, and only while
 the hub answers, so a settle is never queued. On this repo it settled 18 stale
 leases and kept the two whose files were being edited.
 
+## 0.9 · handoff between people
+
+Deliver: `sankofa handoff [text]` and `sankofa pickup [branch|id]`, so a
+teammate can continue a branch when the first person runs out of credits or
+time, with the context, over nothing but the git remote; the hub, the bridge,
+the watcher and the dashboard carry it when present.
+
+Tests: handoff refused with uncommitted changes; the branch and the letter
+reach the remote; the receiver's bridge records one handoff and no landed
+event; pickup switches, prints the letter, turns open items into todos, and
+removes the ref; the sender's bridge finishes the handoff; a pickup with no
+daemon; through a hub, pickup by id is seen on the sending device; toasts only
+on the machines it is for.
+
+Outcome (0.9.0): the letter is a tag object at `refs/sankofa/handoff/<branch>`
+(no commit in the branch's history), and a `handoff` event, an open item with
+`branch` and `sha`. Not yet checked: that a hosted remote (GitHub) accepts and
+serves `refs/sankofa/*` pushes, and a simulation of handoffs going back and
+forth between people.
+
 ## Later / maybe
 
 - Test runner subscriber (run on `done`, write `tests` event).

@@ -15,6 +15,7 @@ public sealed partial class Store
     public Func<string, Entry, Entry>? RecordElsewhere { get; set; }
 
     bool Replicated(string repo) => IsReplica?.Invoke(repo) == true;
+    public bool IsReplicated(string repo) => Replicated(RepoKey(repo));
 
     /// <summary>Every event appended on this thread until disposed records this device and client.
     /// The hub sets it from the request's token, so a device cannot write as another.</summary>
@@ -98,7 +99,7 @@ public sealed partial class Store
                         case "release" when reference is not null:
                             got = Release(repo, reference, q.Session, q.Agent);
                             break;
-                        case "note" or "todo" or "awaiting" or "stop" or "flag" or "overlap" or "landed":
+                        case "note" or "todo" or "awaiting" or "handoff" or "stop" or "flag" or "overlap" or "landed":
                             got = AppendLocked(repo, e, keepTs: true);
                             break;
                         default:

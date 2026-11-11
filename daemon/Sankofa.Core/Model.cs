@@ -19,7 +19,7 @@ public sealed class Entry
     [JsonPropertyName("expires")] public string? Expires { get; set; }
     /// <summary>Client-chosen id for one write, so a write whose answer was lost is never repeated.</summary>
     [JsonPropertyName("nonce")] public string? Nonce { get; set; }
-    /// <summary>landed events: the remote-tracking branch (origin/x) and the commit it now points at.</summary>
+    /// <summary>landed and handoff events: the remote-tracking branch (origin/x) and the commit it now points at.</summary>
     [JsonPropertyName("branch")] public string? Branch { get; set; }
     [JsonPropertyName("sha")] public string? Sha { get; set; }
     /// <summary>0.7, through a hub: the device (from its token) and the client that wrote the event.</summary>
@@ -58,6 +58,9 @@ public sealed class Request
     [JsonPropertyName("glob")] public string? Glob { get; set; }
     [JsonPropertyName("path")] public string? Path { get; set; }
     [JsonPropertyName("ttl")] public long? Ttl { get; set; }
+    /// <summary>append handoff: the remote branch handed over (origin/x) and the commit it was at.</summary>
+    [JsonPropertyName("branch")] public string? Branch { get; set; }
+    [JsonPropertyName("sha")] public string? Sha { get; set; }
     [JsonPropertyName("n")] public int? N { get; set; }
     [JsonPropertyName("since")] public long? Since { get; set; }
     [JsonPropertyName("follow")] public bool Follow { get; set; }

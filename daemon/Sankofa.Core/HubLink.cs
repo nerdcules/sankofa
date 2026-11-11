@@ -372,7 +372,7 @@ public sealed class HubLink : IDisposable
                 : Response.Fail($"hub unreachable at {url}");
         var e = r.Verb switch
         {
-            "append" => new Entry { Type = r.Type ?? "note", Text = r.Text ?? "", Ref = r.Ref, Wt = r.Wt },
+            "append" => new Entry { Type = r.Type ?? "note", Text = r.Text ?? "", Ref = r.Ref, Wt = r.Wt, Branch = r.Branch, Sha = r.Sha },
             "done" => new Entry { Type = "done", Text = string.IsNullOrWhiteSpace(r.Text) ? "resolved" : r.Text!, Ref = r.Ref, Wt = r.Wt },
             "release" => new Entry { Type = "release", Text = $"release {r.Ref}", Ref = r.Ref },
             "claim" => new Entry
@@ -382,7 +382,7 @@ public sealed class HubLink : IDisposable
             },
             _ => r.Entry ?? new Entry { Type = "flag", Text = "empty record" },
         };
-        if (r.Verb == "append" && e.Type is not ("note" or "todo" or "awaiting" or "stop"))
+        if (r.Verb == "append" && e.Type is not ("note" or "todo" or "awaiting" or "handoff" or "stop"))
             return Response.Fail($"cannot append type '{e.Type}'");
         e.Session = r.Session ?? "-"; e.Agent = r.Agent ?? "main"; e.Client = r.Client; e.Nonce = r.Nonce;
         if (r.Verb == "record") { e.Session = "sankofad"; e.Agent = "sankofad"; }

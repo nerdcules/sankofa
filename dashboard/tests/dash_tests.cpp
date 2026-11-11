@@ -53,6 +53,15 @@ private slots:
         QVERIFY(l.leases("r", Now).isEmpty());
     }
 
+    void aHandoffIsOpenUntilPickedUp()
+    {
+        Ledger l;
+        l.ingest("r", obj("{\"id\":\"e1\",\"type\":\"handoff\",\"text\":\"parser done\",\"branch\":\"origin/p\",\"sha\":\"abc\",\"ts\":\"2026-11-11T09:00:00.000Z\"}"));
+        QCOMPARE(l.openItems("r", "handoff").size(), 1);
+        l.ingest("r", obj("{\"id\":\"e2\",\"type\":\"done\",\"ref\":\"e1\",\"text\":\"picked up on lap\",\"ts\":\"2026-11-11T09:05:00.000Z\"}"));
+        QVERIFY(l.openItems("r", "handoff").isEmpty());
+    }
+
     void aHeldLeasePastItsTimeShowsExpiredWithoutTheDaemon()
     {
         Ledger l;
