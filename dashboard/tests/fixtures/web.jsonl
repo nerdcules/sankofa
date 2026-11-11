@@ -1,0 +1,6 @@
+{"ts": "2026-11-11T03:04:00.000Z", "id": "e1", "type": "landed", "session": "sankofad", "agent": "sankofad", "text": "new branch origin/routine/deps, 1 new commit, now 3c9e1d2 \"Bump vite and vitest\" by Nightly routine", "branch": "origin/routine/deps", "sha": "3c9e1d2"}
+{"ts": "2026-11-11T08:10:00.000Z", "id": "e2", "type": "todo", "session": "s-44b0", "agent": "main", "text": "Empty state for the reports page"}
+{"ts": "2026-11-11T08:11:00.000Z", "id": "e3", "type": "note", "session": "s-44b0", "agent": "main", "text": "Reports table virtualised; scroll stays at 60 fps with 10k rows."}
+{"ts": "2026-11-11T08:40:00.000Z", "id": "e4", "type": "awaiting", "session": "s-44b0", "agent": "main", "text": "Log in to the staging dashboard so the visual tests can run"}
+{"ts": "2026-11-11T09:05:00.000Z", "id": "e5", "type": "done", "session": "s-44b0", "agent": "main", "text": "Empty state shipped with the new illustration", "ref": "e2"}
+{"ts": "2026-11-11T09:44:00.000Z", "id": "e6", "type": "claim", "session": "s-e5d1", "agent": "main", "text": "claim src/components/Chart.tsx", "glob": "src/components/Chart.tsx", "expires": "2026-11-11T10:14:00.000Z"}

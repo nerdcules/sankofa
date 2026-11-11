@@ -1,0 +1,10 @@
+{"ts": "2026-11-11T07:40:00.000Z", "id": "e1", "type": "note", "session": "s-7f2a", "agent": "main", "text": "Moved rate limiting into middleware; the old decorator is gone."}
+{"ts": "2026-11-11T08:05:00.000Z", "id": "e2", "type": "claim", "session": "s-7f2a", "agent": "main", "text": "claim src/billing/**", "glob": "src/billing/**", "expires": "2026-11-11T10:35:00.000Z", "device": "desk"}
+{"ts": "2026-11-11T08:06:00.000Z", "id": "e3", "type": "todo", "session": "s-7f2a", "agent": "main", "text": "Backfill invoice totals for accounts created before March"}
+{"ts": "2026-11-11T08:30:00.000Z", "id": "e4", "type": "claim", "session": "s-91cc", "agent": "subagent:Explore/a41", "text": "claim src/auth/session.ts", "glob": "src/auth/session.ts", "expires": "2026-11-11T09:00:00.000Z"}
+{"ts": "2026-11-11T09:00:00.000Z", "id": "e5", "type": "expire", "session": "sankofad", "agent": "sankofad", "text": "lease e4 on src/auth/session.ts expired; its paths may hold a half-finished edit", "ref": "e4"}
+{"ts": "2026-11-11T09:12:00.000Z", "id": "e6", "type": "awaiting", "session": "s-7f2a", "agent": "main", "text": "Needs a decision: keep the v1 billing webhook for one more release, or drop it now?", "device": "desk"}
+{"ts": "2026-11-11T09:20:00.000Z", "id": "e7", "type": "overlap", "session": "sankofad", "agent": "sankofad", "text": "src/billing/tax.ts is changed in 2 worktrees: api [main], api-wt-tax [tax-rounding]", "glob": "src/billing/tax.ts"}
+{"ts": "2026-11-11T09:31:00.000Z", "id": "e8", "type": "note", "session": "s-c013", "agent": "main", "text": "Tax rounding: half-even everywhere; tests pinned to the 2025 tables.", "device": "laptop"}
+{"ts": "2026-11-11T09:40:00.000Z", "id": "e9", "type": "todo", "session": "s-c013", "agent": "main", "text": "Remove the TAX_LEGACY flag once the migration has run", "device": "laptop"}
+{"ts": "2026-11-11T09:52:00.000Z", "id": "e10", "type": "claim", "session": "s-c013", "agent": "main", "text": "claim migrations/**", "glob": "migrations/**", "expires": "2026-11-11T10:22:00.000Z", "device": "laptop"}

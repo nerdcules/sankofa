@@ -15,7 +15,7 @@ public sealed class SankofaException(string message) : Exception(message);
 /// </summary>
 public sealed partial class Store : IDisposable
 {
-    public const string Version = "0.7.0";
+    public const string Version = "0.8.0";
     public const long DefaultTtlSeconds = 1800;
     static readonly HashSet<string> AppendTypes = ["note", "todo", "awaiting", "stop", "flag"];
     const string Cols = "seq, repo, id, ts, type, session, agent, text, ref, wt, glob, expires, nonce, branch, sha, device, client";
