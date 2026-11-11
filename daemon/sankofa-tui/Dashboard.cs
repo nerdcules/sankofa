@@ -22,7 +22,7 @@ sealed class Dashboard(Board board, BoardFiles files, Func<IEnumerable<string>> 
         public required ListView List;
         public required string Title;
         public List<object> Rows = [];
-        public readonly ObservableCollection<string> Lines = [];
+        public ObservableCollection<string> Lines = [];
         public object? Selected => List.SelectedItem is int i && i >= 0 && i < Rows.Count ? Rows[i] : null;
         /// <summary>Until when the border shows that something new arrived.</summary>
         public DateTime FlashUntil;
@@ -207,6 +207,12 @@ sealed class Dashboard(Board board, BoardFiles files, Func<IEnumerable<string>> 
         Fill(leases, snap.Leases.Cast<object>(), o => snap.Row((Board.LeaseRow)o));
         Fill(words, snap.Words.Cast<object>(), o => snap.Row((Board.Word)o));
         Fill(alerts, snap.Alerts.Cast<object>(), o => snap.Row((Board.Alert)o));
+        // forget rows no longer shown, so a dashboard left open for weeks does not keep every row it ever showed
+        if (firstSeen.Count > 4 * panels.Sum(p => p.Rows.Count) + 1000)
+        {
+            var shown = panels.SelectMany(p => p.Rows).Select(RowKey).ToHashSet();
+            foreach (var k in firstSeen.Keys.Where(k => !shown.Contains(k)).ToList()) firstSeen.Remove(k);
+        }
         if (snap.Missing.Count > 0) alerts.Frame.Title = $"Alerts · missing ledger: {string.Join(", ", snap.Missing)}";
     }
 
@@ -221,8 +227,10 @@ sealed class Dashboard(Board board, BoardFiles files, Func<IEnumerable<string>> 
         p.Frame.Title = $"{p.Title} ({p.Rows.Count})";
         p.List.SetNeedsDraw();   // the highlights fade with time, not only when the rows change
         if (lines.SequenceEqual(p.Lines)) return;
-        p.Lines.Clear();
-        foreach (var l in lines) p.Lines.Add(l);
+        // a new source in one step: clearing and adding row by row makes the list re-measure on
+        // every row, which with thousands of rows takes longer than the half second between refreshes
+        p.Lines = new ObservableCollection<string>(lines);
+        p.List.SetSource(p.Lines);
         if (p.Rows.Count > 0) p.List.SelectedItem = Math.Clamp(keep ?? 0, 0, p.Rows.Count - 1);
     }
 

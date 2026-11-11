@@ -88,7 +88,7 @@ public sealed class Bridge : IDisposable
                 var landed = known is null ? [] : Landings(repo, known, refs)
                     .Where(l => !handoffs.Any(h => h.Sha == l.Sha)).ToList();   // one toast for a handed-off branch
                 written = store.RemoteRefsSeen(repo, refs, [.. handoffs, .. landed]);
-                if (!replica) written.AddRange(store.HandoffsTaken(repo, fetched, h => HandoffRef(repo, h)));
+                if (!replica) written.AddRange(store.HandoffsTaken(repo, fetched, h => HandoffRef(repo, h), h => TakenBy(repo, h)));
             }
             else error ??= "not a git repository";
             store.BridgeFetched(repo, error);
@@ -101,6 +101,19 @@ public sealed class Bridge : IDisposable
     }
 
     public const string HandoffPrefix = "refs/sankofa/remote/";
+    /// <summary>Where the remotes' pickup markers are fetched to: a tag naming the letter taken, tagged by who took it.</summary>
+    public const string TakenPrefix = "refs/sankofa/remote-taken/";
+
+    /// <summary>Who picked up this handoff, from the marker pickup leaves on the remote; null if none names its letter.</summary>
+    static string? TakenBy(string repo, Entry h)
+    {
+        if (h.Branch is not { } b || h.Letter is null) return null;
+        var t = Git.Run(repo, "cat-file", "tag", TakenPrefix + b);
+        if (!t.Ok) return null;
+        var head = t.Out.Partition("\n\n").Item1.Split('\n');
+        if (head.FirstOrDefault(l => l.StartsWith("object ", StringComparison.Ordinal)) != "object " + h.Letter) return null;
+        return head.FirstOrDefault(l => l.StartsWith("tagger ", StringComparison.Ordinal)) is { } tl ? tl[7..].Split(" <")[0] : null;
+    }
 
     /// <summary>Fetch every remote's handoff refs; returns the remotes that answered.</summary>
     HashSet<string> FetchHandoffs(string repo)
@@ -109,7 +122,7 @@ public sealed class Bridge : IDisposable
         if (Git.Run(repo, "remote") is not { Ok: true } rs) return ok;
         foreach (var r in rs.Lines)
             if (Git.RunTimed(repo, FetchTimeoutMs, "fetch", "--prune", "--quiet", "--no-tags", r,
-                    $"+refs/sankofa/handoff/*:{HandoffPrefix}{r}/*").Ok)
+                    $"+refs/sankofa/handoff/*:{HandoffPrefix}{r}/*", $"+refs/sankofa/taken/*:{TakenPrefix}{r}/*").Ok)
                 ok.Add(r);
         return ok;
     }
@@ -127,6 +140,9 @@ public sealed class Bridge : IDisposable
         foreach (var (rf, tag) in now.Where(kv => kv.Key.StartsWith(HandoffPrefix, StringComparison.Ordinal)).OrderBy(kv => kv.Key, StringComparer.Ordinal))
         {
             if (known.TryGetValue(rf, out var old) && old == tag) continue;
+            // a letter this machine wrote (the ledger may not say so, if the handoff was cut short)
+            var rb = rf[HandoffPrefix.Length..].Partition("/").Item3;
+            if (Git.Run(repo, "rev-parse", "-q", "--verify", "refs/sankofa/handoff/" + rb) is { Ok: true } own && own.Out.Trim() == tag) continue;
             var t = Git.Run(repo, "cat-file", "tag", tag);
             var c = Git.Run(repo, "rev-parse", "-q", "--verify", tag + "^{commit}");
             if (!t.Ok || !c.Ok) continue;
