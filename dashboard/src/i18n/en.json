@@ -1,0 +1,26 @@
+{
+  "in %n h": {
+    "one": "in %n h",
+    "other": "in %n h"
+  },
+  "in %n min": {
+    "one": "in %n min",
+    "other": "in %n min"
+  },
+  "%n d ago": {
+    "one": "%n day ago",
+    "other": "%n days ago"
+  },
+  "%n h ago": {
+    "one": "%n h ago",
+    "other": "%n h ago"
+  },
+  "%n min ago": {
+    "one": "%n min ago",
+    "other": "%n min ago"
+  },
+  "%n events, last %1": {
+    "one": "%n event, last %1",
+    "other": "%n events, last %1"
+  }
+}

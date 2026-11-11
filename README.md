@@ -32,13 +32,14 @@ sankofad ── SQLite, append-only events, leases with expiry
 
 ## Status
 
-Iteration 0.7: shell ledger, Stop hooks, desktop toasts for items that need
+Iteration 0.8: shell ledger, Stop hooks, desktop toasts for items that need
 you, `sankofad` (an SQLite event log and path leases), the gates (every edit
 is leased before it happens; git refuses commits on someone else's paths), an
 MCP server so any MCP client can use the ledger without a shell, and detection
 where prevention is not possible: two worktrees changing one path, and work
 that landed on a remote while you were away. A hub shares one ledger and one
-lease table between your machines, and with cloud sessions over MCP. See `docs/ROADMAP.md` for what comes next. Each iteration ships with
+lease table between your machines, and with cloud sessions over MCP. A
+dashboard (`sankofa dash`, `dashboard/`) shows all of it in one window. See `docs/ROADMAP.md` for what comes next. Each iteration ships with
 tests, and its usage gate is run as an accelerated simulation (`sim/`) against
 the real code before the next starts.
 
@@ -231,6 +232,14 @@ A client that cannot run `sankofad`, like a cloud session, speaks MCP to the
 hub directly: `POST http://<hub>/mcp` with `Authorization: Bearer <token>`.
 Its tools are the same as `sankofad mcp`'s, each with a `repo` argument (the
 hub name). A cloud routine that records its work there needs no bridge.
+
+## Dashboard
+
+`sankofa dash` opens `sankofa-dash`, an Omarchy-style Qt app: what waits on
+you, open items, who holds what (and edits left half-finished), the last
+handoff per session, and recent overlaps, landings and flags, for every repo
+`sankofa watch add` lists. `sankofa dash summary` prints the same as text.
+It only reads the ledgers. See `dashboard/README.md`.
 
 ## Simulations
 

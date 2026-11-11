@@ -177,6 +177,21 @@ machine and a hub on the private network.
 
 Deliver: Omarchy-style Qt app or a TUI subscribing to `events --follow`.
 
+Outcome (0.8.0): `dashboard/`, `sankofa-dash`, a Qt Quick app on the Omarchy
+app template (theme accent and rounding live, language live, keyboard
+first), opened with `sankofa dash`. It follows the ledger files rather than
+the daemon's stream: each file is the stream's mirror, and the only copy for
+repos shared through a hub (the local daemon forwards those) and for repos
+with no daemon running. Panels: waiting on you, open, who holds what
+(half-finished edits marked), last handoff per session, and recent overlaps,
+landings and flags. Space copies `sankofa done <id>` or a lease's paths.
+`sankofa-dash summary [--json]` and `render --out` need no display. Tests
+(Qt Test, offscreen): folding, following appended, half-written and replaced
+files, the window rendered from a fixture stream with no daemon, and the
+keys. Pointed at this repo's own ledger it showed at once what reading the
+file by hand had not: 13 leases the edit gate took for this session, expired
+and still marked half-finished although their edits were committed.
+
 ## Later / maybe
 
 - Test runner subscriber (run on `done`, write `tests` event).

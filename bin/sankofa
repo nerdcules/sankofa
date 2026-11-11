@@ -6,7 +6,7 @@
 # POSIX sh + jq.
 set -eu
 
-VERSION=0.7.0
+VERSION=0.8.0
 
 usage() {
   cat <<'USAGE'
@@ -45,6 +45,8 @@ usage: sankofa <command> [args]
                        git remote, like github.com/you/repo; use the same name on every device)
   hub off              stop; the replica is kept as .sankofa/ledger.hub.jsonl
   hub [status]         online / offline, the hub name, writes queued while offline
+  dash [repo...]       open the dashboard (sankofa-dash): who holds what, what is open,
+                       what waits on you; summary prints the same as text
   watch add [dir]      toast this repo's awaiting, overlap and landed events (sankofa-watch)
   watch list           show watched repos
   watch rm [dir]       stop watching a repo
@@ -634,6 +636,10 @@ main() {
     trees)     cmd_trees "$@" ;;
     bridge)    cmd_bridge "$@" ;;
     hub)       cmd_hub "$@" ;;
+    dash)      d=$(command -v sankofa-dash 2>/dev/null || :)
+               [ -n "$d" ] || { [ -x "$SELF_DIR/../dashboard/build/sankofa-dash" ] && d=$SELF_DIR/../dashboard/build/sankofa-dash; }
+               [ -n "$d" ] || die "sankofa-dash is not installed (dashboard/bin/install, or make dash)"
+               exec "$d" "$@" ;;
     version|-V|--version) echo "sankofa $VERSION" ;;
     ""|help|-h|--help) usage ;;
     *) die "unknown command '$cmd' (try: sankofa help)" ;;
