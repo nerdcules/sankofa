@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-// A todo or awaiting item: its text, then id, repo, who and when.
+// A todo, awaiting or handoff item: its text, then id, repo, who and when.
 ColumnLayout {
     spacing: 2
     readonly property var it: parent ? parent.item : null

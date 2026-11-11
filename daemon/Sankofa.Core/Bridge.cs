@@ -8,6 +8,13 @@ namespace Sankofa;
 /// slept, or picked up by the human's own <c>git fetch</c>, is still reported on the next look.
 /// The first look only records a baseline. A branch whose new tip is already in a local branch
 /// is the human's own push (or work they already pulled) and is not reported.
+///
+/// Handoffs ride along: <c>sankofa handoff</c> pushes a tag object under
+/// <c>refs/sankofa/handoff/&lt;branch&gt;</c> naming the commit and carrying the letter, and the
+/// bridge fetches those into <c>refs/sankofa/remote/&lt;remote&gt;/</c>. A new one is recorded as a
+/// <c>handoff</c> event (an open item, toasted), unless this repo already has the handoff (the
+/// sender's own, or one shared through a hub, which carries it in the ledger instead). When the
+/// ref is gone from the remote, someone ran <c>sankofa pickup</c>: the open handoff is finished.
 /// </summary>
 public sealed class Bridge : IDisposable
 {
@@ -63,10 +70,12 @@ public sealed class Bridge : IDisposable
         try
         {
             string? error = null;
+            HashSet<string> fetched = [];
             if (fetch)
             {
                 var f = Git.RunTimed(repo, FetchTimeoutMs, "fetch", "--all", "--prune", "--quiet");
                 if (!f.Ok) error = string.IsNullOrEmpty(f.Err) ? $"git fetch exited {f.Code}" : f.Err.Split('\n')[^1];
+                else fetched = FetchHandoffs(repo);
             }
             // compare even after a failed fetch: the human's own fetch may have moved refs
             var refs = RemoteBranches(repo);
@@ -74,8 +83,12 @@ public sealed class Bridge : IDisposable
             if (refs is not null)
             {
                 var known = store.RemoteRefs(repo);
-                var landed = known is null ? [] : Landings(repo, known, refs);
-                written = store.RemoteRefsSeen(repo, refs, landed);
+                var replica = store.IsReplicated(repo);
+                var handoffs = known is null || replica ? [] : Handoffs(repo, known, refs);
+                var landed = known is null ? [] : Landings(repo, known, refs)
+                    .Where(l => !handoffs.Any(h => h.Sha == l.Sha)).ToList();   // one toast for a handed-off branch
+                written = store.RemoteRefsSeen(repo, refs, [.. handoffs, .. landed]);
+                if (!replica) written.AddRange(store.HandoffsTaken(repo, fetched, h => HandoffRef(repo, h)));
             }
             else error ??= "not a git repository";
             store.BridgeFetched(repo, error);
@@ -87,10 +100,51 @@ public sealed class Bridge : IDisposable
         finally { lock (gate) busy.Remove(repo); }
     }
 
-    /// <summary>refs/remotes/* (not the symbolic */HEAD) to commit ids.</summary>
+    public const string HandoffPrefix = "refs/sankofa/remote/";
+
+    /// <summary>Fetch every remote's handoff refs; returns the remotes that answered.</summary>
+    HashSet<string> FetchHandoffs(string repo)
+    {
+        var ok = new HashSet<string>(StringComparer.Ordinal);
+        if (Git.Run(repo, "remote") is not { Ok: true } rs) return ok;
+        foreach (var r in rs.Lines)
+            if (Git.RunTimed(repo, FetchTimeoutMs, "fetch", "--prune", "--quiet", "--no-tags", r,
+                    $"+refs/sankofa/handoff/*:{HandoffPrefix}{r}/*").Ok)
+                ok.Add(r);
+        return ok;
+    }
+
+    /// <summary>The commit the handoff ref for this event's branch (remote/branch) names now, or null.</summary>
+    static string? HandoffRef(string repo, Entry h) =>
+        h.Branch is { } b && Git.Run(repo, "rev-parse", "-q", "--verify", $"{HandoffPrefix}{b}^{{commit}}") is { Ok: true } r
+            ? r.Out.Trim() : null;
+
+    /// <summary>New or replaced handoff refs, as handoff events: the letter, who wrote it, the branch.</summary>
+    static List<Entry> Handoffs(string repo, Dictionary<string, string> known, Dictionary<string, string> now)
+    {
+        var list = new List<Entry>();
+        foreach (var (rf, tag) in now.Where(kv => kv.Key.StartsWith(HandoffPrefix, StringComparison.Ordinal)).OrderBy(kv => kv.Key, StringComparer.Ordinal))
+        {
+            if (known.TryGetValue(rf, out var old) && old == tag) continue;
+            var t = Git.Run(repo, "cat-file", "tag", tag);
+            var c = Git.Run(repo, "rev-parse", "-q", "--verify", tag + "^{commit}");
+            if (!t.Ok || !c.Ok) continue;
+            var (head, _, body) = t.Out.Partition("\n\n");
+            var tagger = head.Split('\n').FirstOrDefault(l => l.StartsWith("tagger ", StringComparison.Ordinal)) is { } tl
+                ? tl[7..].Split(" <")[0] : "someone";
+            list.Add(new Entry
+            {
+                Type = "handoff", Branch = rf[HandoffPrefix.Length..], Sha = c.Out.Trim(),
+                Text = $"from {tagger}: {body.Trim()}",
+            });
+        }
+        return list;
+    }
+
+    /// <summary>refs/remotes/* (not the symbolic */HEAD) and the fetched handoff refs, to object ids.</summary>
     static Dictionary<string, string>? RemoteBranches(string repo)
     {
-        var r = Git.Run(repo, "for-each-ref", "--format=%(refname)%00%(objectname)%00%(symref)", "refs/remotes");
+        var r = Git.Run(repo, "for-each-ref", "--format=%(refname)%00%(objectname)%00%(symref)", "refs/remotes", HandoffPrefix);
         if (!r.Ok) return null;
         var d = new Dictionary<string, string>();
         foreach (var line in r.Lines)
@@ -105,7 +159,7 @@ public sealed class Bridge : IDisposable
     {
         var mine = Git.Run(repo, "for-each-ref", "--format=%(objectname)", "refs/heads") is { Ok: true } h ? h.Lines.ToHashSet() : [];
         var list = new List<Entry>();
-        foreach (var (rf, sha) in now.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+        foreach (var (rf, sha) in now.Where(kv => !kv.Key.StartsWith(HandoffPrefix, StringComparison.Ordinal)).OrderBy(kv => kv.Key, StringComparer.Ordinal))
         {
             known.TryGetValue(rf, out var old);
             if (old == sha || mine.Contains(sha)) continue;
@@ -120,7 +174,7 @@ public sealed class Bridge : IDisposable
             if (old is null)
             {
                 // commits on the new branch that no other branch already has
-                var others = now.Where(kv => kv.Key != rf).Select(kv => "^" + kv.Value).Concat(mine.Select(m => "^" + m)).Distinct();
+                var others = now.Where(kv => kv.Key != rf && !kv.Key.StartsWith(HandoffPrefix, StringComparison.Ordinal)).Select(kv => "^" + kv.Value).Concat(mine.Select(m => "^" + m)).Distinct();
                 var n = Git.Run(repo, ["rev-list", "--count", sha, .. others]);
                 what = $"new branch {branch}" + (n.Ok ? $", {Plural(n.Out.Trim(), "new commit")}" : "");
             }
@@ -142,4 +196,13 @@ public sealed class Bridge : IDisposable
     static string Plural(string n, string word) => n == "1" ? $"1 {word}" : $"{n} {word}s";
 
     public void Dispose() => tick?.Dispose();
+}
+
+static class StringParts
+{
+    public static (string, string, string) Partition(this string s, string sep)
+    {
+        var i = s.IndexOf(sep, StringComparison.Ordinal);
+        return i < 0 ? (s, "", "") : (s[..i], sep, s[(i + sep.Length)..]);
+    }
 }

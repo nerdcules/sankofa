@@ -17,7 +17,7 @@ class Ledger : public QObject {
 public:
     explicit Ledger(QObject *parent = nullptr) : QObject(parent) {}
 
-    struct Item {    // a todo or awaiting entry
+    struct Item {    // a todo, awaiting or handoff entry
         QString repo, id, type, text, ts, session, agent, device;
         bool resolved = false;
         QString resolvedTs, resolution;

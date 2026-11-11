@@ -1,6 +1,6 @@
 #!/bin/sh
 # sankofa-watch - desktop toasts for new ledger entries in every registered repo.
-# Iteration 0.2; overlap and landed events since 0.6. POSIX sh + jq + inotifywait + notify-send. Runs as a systemd user service.
+# Iteration 0.2; overlap and landed events since 0.6, handoffs since 0.9. POSIX sh + jq + inotifywait + notify-send. Runs as a systemd user service.
 #
 #   sankofa-watch          watch forever (the service)
 #   sankofa-watch --once   scan once and exit (tests, cron, catch-up)
@@ -8,7 +8,7 @@
 # Registry: $XDG_CONFIG_HOME/sankofa/watched, one repo root per line (sankofa watch add).
 # Offsets:  $XDG_STATE_HOME/sankofa/offsets, lines read per ledger, so nothing is toasted
 #           twice and entries written while the service was down are toasted on return.
-# Env: SANKOFA_TOAST_TYPES (default "awaiting overlap landed"; add "note" to see every handoff note), SANKOFA_TOAST_BURST (default 5: more new
+# Env: SANKOFA_TOAST_TYPES (default "awaiting handoff overlap landed"; add "note" to see every handoff note), SANKOFA_TOAST_BURST (default 5: more new
 #      entries than this in one scan become one summary toast), SANKOFA_WATCH_TIMEOUT
 #      (default 30: seconds between rescans if inotify misses a wakeup).
 set -eu
@@ -16,7 +16,9 @@ CONF=${XDG_CONFIG_HOME:-$HOME/.config}/sankofa
 STATE=${XDG_STATE_HOME:-$HOME/.local/state}/sankofa
 REG=$CONF/watched
 OFF=$STATE/offsets
-TYPES=${SANKOFA_TOAST_TYPES:-awaiting overlap landed}
+TYPES=${SANKOFA_TOAST_TYPES:-awaiting handoff overlap landed}
+HUBCONF=${SANKOFA_HUB_CONF:-$CONF/hub.conf}
+ME=$(grep -E '^device=' "$HUBCONF" 2>/dev/null | tail -n1 | cut -d= -f2-); ME=${ME:-$(uname -n)}
 BURST=${SANKOFA_TOAST_BURST:-5}
 TIMEOUT=${SANKOFA_WATCH_TIMEOUT:-30}
 mkdir -p "$CONF" "$STATE"; touch "$REG" "$OFF"
@@ -48,7 +50,9 @@ scan_repo() { # root
   if [ "$n" -lt "$off" ]; then offset_set "$root" "$n"; return 0; fi  # ledger was replaced
   name=$(basename "$root")
   new=$(tail -n +"$((off + 1))" "$led" | head -n "$((n - off))" \
-        | jq -c --argjson t "$(types_json)" 'select(.type as $x | $t | index($x))' 2>/dev/null || true)
+        | jq -c --argjson t "$(types_json)" --arg me "$ME" 'select(.type as $x | $t | index($x))
+            # a handoff is for the others: not the device (hub) or the CLI (no hub) that wrote it
+            | select(.type != "handoff" or ((.device // "") != $me and (.device != null or .session == "sankofad")))' 2>/dev/null || true)
   k=$(printf '%s' "$new" | grep -c . || true)
   if [ "$k" -gt "$BURST" ]; then
     body=$(printf '%s\n' "$new" | jq -rs 'group_by(.type) | map("\(length) \(.[0].type)") | join(", ")')
@@ -57,10 +61,12 @@ scan_repo() { # root
     toast "$urg" "$name: $k new entries" "$body${last:+
 latest awaiting: $last}"
   elif [ "$k" -gt 0 ]; then
-    printf '%s\n' "$new" | jq -r '[.type, .agent, (.text | gsub("[\t\n]"; " "))] | @tsv' \
-    | while IFS="$(printf '\t')" read -r type agent text; do
+    printf '%s\n' "$new" | jq -r '[.type, .agent, (.text | gsub("[\t\n]"; " ")), (.branch // "-" | sub("^[^/]*/"; ""))] | @tsv' \
+    | while IFS="$(printf '\t')" read -r type agent text branch; do
         case $type in
           awaiting) toast critical "$name: awaiting you" "$text" ;;
+          handoff)  toast critical "$name: handed off to you" "$text
+sankofa pickup $branch" ;;
           overlap)  toast normal "$name: two worktrees changed one path" "$text" ;;
           landed)   toast normal "$name: work landed on the remote" "$text" ;;
           *)        toast normal "$name: $type" "[$agent] $text" ;;

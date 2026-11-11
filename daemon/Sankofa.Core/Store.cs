@@ -15,9 +15,9 @@ public sealed class SankofaException(string message) : Exception(message);
 /// </summary>
 public sealed partial class Store : IDisposable
 {
-    public const string Version = "0.8.1";
+    public const string Version = "0.9.0";
     public const long DefaultTtlSeconds = 1800;
-    static readonly HashSet<string> AppendTypes = ["note", "todo", "awaiting", "stop", "flag"];
+    static readonly HashSet<string> AppendTypes = ["note", "todo", "awaiting", "handoff", "stop", "flag"];
     const string Cols = "seq, repo, id, ts, type, session, agent, text, ref, wt, glob, expires, nonce, branch, sha, device, client";
     const string LeaseCols = "id, glob, session, agent, claimed, expires, dirty, state, device";
 
@@ -101,9 +101,12 @@ public sealed partial class Store : IDisposable
     // ---------------------------------------------------------------- verbs
 
     public Entry Append(string repo, string type, string text, string? session, string? agent,
-                        string? reference = null, string? wt = null, string? nonce = null)
+                        string? reference = null, string? wt = null, string? nonce = null,
+                        string? branch = null, string? sha = null)
     {
         if (!AppendTypes.Contains(type)) throw new SankofaException($"cannot append type '{type}'");
+        if (type == "handoff" && (string.IsNullOrEmpty(branch) || string.IsNullOrEmpty(sha)))
+            throw new SankofaException("a handoff names a branch and a commit");
         if (type != "stop" && string.IsNullOrWhiteSpace(text)) throw new SankofaException($"{type} needs text");
         lock (gate)
         {
@@ -113,12 +116,12 @@ public sealed partial class Store : IDisposable
             return AppendLocked(repo, new Entry
             {
                 Type = type, Text = text, Session = session ?? "-", Agent = agent ?? "main", Ref = reference, Wt = wt,
-                Nonce = nonce,
+                Nonce = nonce, Branch = type == "handoff" ? branch : null, Sha = type == "handoff" ? sha : null,
             });
         }
     }
 
-    /// <summary>Resolve a todo or awaiting item, or finish a lease (clears its dirty mark).</summary>
+    /// <summary>Resolve a todo, awaiting or handoff item, or finish a lease (clears its dirty mark).</summary>
     public Entry Done(string repo, string id, string? text, string? session, string? agent, string? wt = null, string? nonce = null)
     {
         lock (gate)
@@ -129,7 +132,7 @@ public sealed partial class Store : IDisposable
             var e = Get(repo, id) ?? throw new SankofaException($"no open item with id {id}");
             switch (e.Type)
             {
-                case "todo" or "awaiting":
+                case "todo" or "awaiting" or "handoff":
                     if (db.Scalar("SELECT 1 FROM events WHERE repo=? AND type='done' AND ref=?", repo, id) is not null)
                         throw new SankofaException($"{id} is already resolved");
                     break;
@@ -313,7 +316,7 @@ public sealed partial class Store : IDisposable
             repo = RepoKey(repo);
             SyncLocked(repo);
             return Rows($"""
-                SELECT {Cols} FROM events e WHERE repo=? AND type IN ('todo','awaiting')
+                SELECT {Cols} FROM events e WHERE repo=? AND type IN ('todo','awaiting','handoff')
                 AND NOT EXISTS (SELECT 1 FROM events d WHERE d.repo=e.repo AND d.type='done' AND d.ref=e.id)
                 ORDER BY seq
                 """, repo);

@@ -19,7 +19,7 @@ void Ledger::ingest(const QString &repo, const QJsonObject &e)
     if (ts > r.lastTs)
         r.lastTs = ts;
 
-    if (type == "todo" || type == "awaiting") {
+    if (type == "todo" || type == "awaiting" || type == "handoff") {
         Item item{repo, id, type, text, ts, session, agent, device, false, {}, {}};
         r.items.insert(id, item);
     } else if (type == "claim") {

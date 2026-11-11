@@ -192,7 +192,7 @@ public sealed class Server
                     return new Response { Version = Store.Version };
                 case "append":
                 {
-                    var e = store.Append(Repo(), r.Type ?? "", r.Text ?? "", r.Session, r.Agent, r.Ref, r.Wt, r.Nonce);
+                    var e = store.Append(Repo(), r.Type ?? "", r.Text ?? "", r.Session, r.Agent, r.Ref, r.Wt, r.Nonce, r.Branch, r.Sha);
                     return new Response { Id = e.Id, Entry = e };
                 }
                 case "done":

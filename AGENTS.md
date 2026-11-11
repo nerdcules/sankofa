@@ -8,6 +8,9 @@ never edit the ledger by hand.
 - When you leave something unfinished: `sankofa todo "<text>"` (prints an id).
 - When a step needs the human (sudo, a login, a decision): `sankofa awaiting "<text>"`.
 - When an open item is finished: `sankofa done <id> "<text>"`.
+- If `sankofa open` lists a `handoff`, or the human says work was handed to
+  them: `sankofa pickup [id]` switches to the branch and prints the letter;
+  continue from it. To hand work on: commit, then `sankofa handoff "<text>"`.
 - Every file you edit is leased to you automatically by the edit gate. If an
   edit is denied because another session or subagent holds the file, do not
   work around it (no Bash rewrites of that file): work on something else, wait,
