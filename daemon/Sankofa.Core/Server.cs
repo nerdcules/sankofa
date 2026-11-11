@@ -19,6 +19,10 @@ public sealed class Server
 
     /// <summary>The overlap watcher and the remote bridge, when this server runs them (sankofad serve).</summary>
     public Overlaps? Overlaps { get; set; }
+    /// <summary>0.7: this device's link to a hub; repos attached to it are served from there.</summary>
+    public HubLink? Link { get; set; }
+    static readonly HashSet<string> HubVerbs =
+        ["append", "done", "claim", "release", "ask", "check", "finish", "leases", "open", "last", "events", "sync", "record"];
     public Bridge? Bridge { get; set; }
     Overlaps? passive;
     Overlaps Trees => Overlaps ?? (passive ??= new Overlaps(store, useInotify: false));
@@ -114,7 +118,7 @@ public sealed class Server
         await w.FlushAsync();
     }
 
-    async Task FollowAsync(Request req, StreamWriter w, CancellationToken ct)
+    public async Task FollowAsync(Request req, StreamWriter w, CancellationToken ct, TimeSpan? heartbeat = null)
     {
         var ch = Channel.CreateUnbounded<Entry>(new UnboundedChannelOptions { SingleReader = true });
         string? repo = req.Repo is null ? null : Store.RepoKey(req.Repo);
@@ -129,8 +133,22 @@ public sealed class Server
                     last = e.Seq ?? last;
                 }
             await w.FlushAsync();
-            await foreach (var e in ch.Reader.ReadAllAsync(ct))
+            while (true)
             {
+                Entry e;
+                if (heartbeat is { } hb)
+                {
+                    // an empty line now and then, so a client can tell a quiet stream from a dead network
+                    using var t = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    t.CancelAfter(hb);
+                    try { e = await ch.Reader.ReadAsync(t.Token); }
+                    catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                    {
+                        await w.WriteLineAsync(); await w.FlushAsync();
+                        continue;
+                    }
+                }
+                else e = await ch.Reader.ReadAsync(ct);
                 if (req.Since is not null && e.Seq <= last) continue;
                 await w.WriteLineAsync(JsonSerializer.Serialize(e, Json.Wire.Entry));
                 await w.FlushAsync();
@@ -155,6 +173,17 @@ public sealed class Server
         try
         {
             string Repo() => r.Repo ?? throw new SankofaException("repo is required");
+            if (Link is { } link)
+            {
+                if (r.Repo is not null && HubVerbs.Contains(r.Verb) && link.Covers(Store.RepoKey(r.Repo))) return link.Handle(r);
+                switch (r.Verb)
+                {
+                    case "hub-attach": return link.Attach(Repo());
+                    case "hub-detach": return link.Detach(Repo());
+                    case "hub-status": return link.Status(Repo());
+                    case "finish" when r.Repo is null: link.FinishEverywhere(r); break;
+                }
+            }
             switch (r.Verb)
             {
                 case "ping":
@@ -234,6 +263,16 @@ public sealed class Server
                     if (n == 0) throw new SankofaException("no such tree registered");
                     Overlaps?.Refresh();
                     return new Response();
+                }
+                case "import":
+                {
+                    var (map, written) = store.Import(Repo(), r.Entries ?? []);
+                    return new Response { Map = map, Entries = written };
+                }
+                case "record":
+                {
+                    var e = store.Record(Repo(), r.Entry ?? throw new SankofaException("record needs an entry"));
+                    return new Response { Id = e.Id, Entry = e };
                 }
                 case "rescan":
                     return new Response { Entries = Trees.Scan(Repo()) };

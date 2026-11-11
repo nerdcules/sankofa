@@ -8,6 +8,9 @@
 # Env: SANKOFA_NO_MCP=1 skips the client registrations; CODEX_HOME locates Codex's config.
 # Env: XDG_BIN_HOME, CLAUDE_SETTINGS, XDG_CONFIG_HOME; SANKOFA_NO_SYSTEMD=1 writes the
 # unit but does not call systemctl (tests, containers).
+# --hub also installs and starts sankofa-hub.service on this box (the always-on machine
+# every device shares a ledger through); SANKOFA_HUB_LISTEN sets its address, like
+# http://100.64.0.7:8787/ (a Tailscale address). Default http://127.0.0.1:8787/.
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
 BIN=${XDG_BIN_HOME:-$HOME/.local/bin}
@@ -69,7 +72,8 @@ if [ "${1:-}" = --uninstall ]; then
   done
   mcp_unregister
   sysd daemon-reload
-  rm -f "$BIN/sankofa" "$BIN/sankofa-watch" "$BIN/sankofad" "$BIN/sankofa-mcp"
+  [ -f "$UNIT_DIR/sankofa-hub.service" ] && { sysd disable --now sankofa-hub.service; rm -f "$UNIT_DIR/sankofa-hub.service"; }
+  rm -f "$BIN/sankofa" "$BIN/sankofa-watch" "$BIN/sankofad" "$BIN/sankofa-mcp" "$BIN/sankofa-hub"
   backup
   tmp=$(mktemp)
   jq --argjson hs "$HOOKS" '
@@ -111,6 +115,7 @@ install_unit() { sed "s|@BIN@|$BIN|g" "$HERE/systemd/$1" > "$UNIT_DIR/$1.tmp" &&
 if [ -x "$DAEMON" ]; then
   ln -sf "$DAEMON" "$BIN/sankofad"
   [ -x "$HERE/bin/out/sankofa-mcp" ] && ln -sf "$HERE/bin/out/sankofa-mcp" "$BIN/sankofa-mcp"
+  [ -x "$HERE/bin/out/sankofa-hub" ] && ln -sf "$HERE/bin/out/sankofa-hub" "$BIN/sankofa-hub"
   install_unit sankofad.service
   echo "install: $BIN/sankofad -> $DAEMON"
 else
@@ -123,5 +128,12 @@ for u in $UNITS; do
   sysd enable "$u"; sysd restart "$u"
 done
 echo "install: user services installed in $UNIT_DIR"
+if [ "${1:-}" = --hub ]; then
+  listen=${SANKOFA_HUB_LISTEN:-http://127.0.0.1:8787/}
+  sed "s|@BIN@|$BIN|g; s|@LISTEN@|$listen|g" "$HERE/systemd/sankofa-hub.service" > "$UNIT_DIR/sankofa-hub.service"
+  sysd daemon-reload; sysd enable sankofa-hub.service; sysd restart sankofa-hub.service
+  echo "install: sankofa-hub listening on $listen. Add a token per device: sankofad hub token add <device>"
+  echo "install: on a server, keep user services running after logout: loginctl enable-linger $(id -un)"
+fi
 mcp_register
 echo "install: in each repo that should keep a ledger: sankofa init; sankofa watch add; sankofa gate install"

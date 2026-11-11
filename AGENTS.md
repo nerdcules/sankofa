@@ -22,6 +22,10 @@ never edit the ledger by hand.
   shows an `overlap` event for a path you changed, another tree changed it too:
   tell the human before merging. A `landed` event is work pushed to a remote
   by someone else (often a scheduled agent); read it before redoing that work.
+- If the repo is shared through a hub, other machines' sessions hold leases
+  too: a denial names the device. Ids starting with `q` were written while
+  the hub was unreachable and are renumbered when it answers; the old id still
+  works for `done` from the same machine.
 - Without a shell, the same verbs are MCP tools on the `sankofa` server
   (`sankofad mcp`): `open`, `last`, `note`, `todo`, `awaiting`, `done`,
   `claim`, `release`, `ask`, `leases`.

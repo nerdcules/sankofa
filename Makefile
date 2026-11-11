@@ -2,14 +2,18 @@
 DAEMON := bin/out/sankofad
 
 MCP := bin/out/sankofa-mcp
+HUB := bin/out/sankofa-hub
 SOURCES := $(shell find daemon -name '*.cs' -o -name '*.csproj' -o -name '*.props' | grep -v /obj/ | grep -v /bin/)
 
-build: $(DAEMON) $(MCP)
+build: $(DAEMON) $(MCP) $(HUB)
 $(DAEMON): $(SOURCES)
 	dotnet publish daemon/sankofad -c Release -r linux-x64 -o bin/out --nologo -v quiet
 	@rm -f bin/out/*.pdb bin/out/*.dbg
 $(MCP): $(SOURCES)
 	dotnet publish daemon/sankofa-mcp -c Release -r linux-x64 -o bin/out --nologo -v quiet
+	@rm -f bin/out/*.pdb bin/out/*.dbg
+$(HUB): $(SOURCES)
+	dotnet publish daemon/sankofa-hub -c Release -r linux-x64 -o bin/out --nologo -v quiet
 	@rm -f bin/out/*.pdb bin/out/*.dbg
 
 # shell tests run twice: on the local ledger, then with every write through sankofad

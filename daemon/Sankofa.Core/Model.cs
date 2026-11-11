@@ -22,6 +22,9 @@ public sealed class Entry
     /// <summary>landed events: the remote-tracking branch (origin/x) and the commit it now points at.</summary>
     [JsonPropertyName("branch")] public string? Branch { get; set; }
     [JsonPropertyName("sha")] public string? Sha { get; set; }
+    /// <summary>0.7, through a hub: the device (from its token) and the client that wrote the event.</summary>
+    [JsonPropertyName("device")] public string? Device { get; set; }
+    [JsonPropertyName("client")] public string? Client { get; set; }
     /// <summary>Daemon-wide sequence number; only on the wire, never in the JSONL file.</summary>
     [JsonPropertyName("seq")] public long? Seq { get; set; }
     [JsonPropertyName("repo")] public string? Repo { get; set; }
@@ -36,6 +39,8 @@ public sealed class Lease
     [JsonPropertyName("claimed")] public string Claimed { get; set; } = "";
     [JsonPropertyName("expires")] public string Expires { get; set; } = "";
     [JsonPropertyName("dirty")] public bool Dirty { get; set; }
+    /// <summary>The device the holder is on (through a hub).</summary>
+    [JsonPropertyName("device")] public string? Device { get; set; }
     /// <summary>held, released, done, expired</summary>
     [JsonPropertyName("state")] public string State { get; set; } = "";
 }
@@ -63,6 +68,12 @@ public sealed class Request
     /// <summary>bridge: seconds between fetches</summary>
     [JsonPropertyName("interval")] public long? Interval { get; set; }
     [JsonPropertyName("on")] public bool? On { get; set; }
+    /// <summary>Who is asking: cli, gate:claude-code, mcp:&lt;name&gt; (recorded with the event on a hub).</summary>
+    [JsonPropertyName("client")] public string? Client { get; set; }
+    /// <summary>import: events written while the hub was unreachable, in order.</summary>
+    [JsonPropertyName("entries")] public List<Entry>? Entries { get; set; }
+    /// <summary>record: an event the daemon observed (overlap, landed, flag).</summary>
+    [JsonPropertyName("entry")] public Entry? Entry { get; set; }
 }
 
 /// <summary>A worktree in a repo's overlap group.</summary>
@@ -110,6 +121,17 @@ public sealed class Response
     [JsonPropertyName("hits")] public List<Hit>? Hits { get; set; }
     [JsonPropertyName("trees")] public List<TreeInfo>? Trees { get; set; }
     [JsonPropertyName("bridge")] public BridgeInfo? Bridge { get; set; }
+    /// <summary>Hub answers to a request carrying <c>since</c>: every event of the repo after it, in order,
+    /// so a device's replica stays a gapless copy. <c>more</c> when the tail was cut short.</summary>
+    [JsonPropertyName("tail")] public List<Entry>? Tail { get; set; }
+    [JsonPropertyName("more")] public bool? More { get; set; }
+    /// <summary>import: the id each imported event got on the hub, by the id it had on the device.</summary>
+    [JsonPropertyName("map")] public Dictionary<string, string>? Map { get; set; }
+    [JsonPropertyName("device")] public string? Device { get; set; }
+    /// <summary>hub-status: the hub's address, the replica's position, bytes queued while away.</summary>
+    [JsonPropertyName("url")] public string? Url { get; set; }
+    [JsonPropertyName("cursor")] public long? Cursor { get; set; }
+    [JsonPropertyName("queued")] public long? Queued { get; set; }
 
     public static Response Fail(string error) => new() { Ok = false, Error = error };
 }
@@ -124,6 +146,8 @@ public sealed class Response
 [JsonSerializable(typeof(BridgeInfo))]
 [JsonSerializable(typeof(string))]
 [JsonSerializable(typeof(Dictionary<string, JsonElement>))]
+[JsonSerializable(typeof(Dictionary<string, string>))]
+[JsonSerializable(typeof(List<Entry>))]
 public partial class Json : JsonSerializerContext
 {
     /// <summary>Like Default, but leaves quotes, apostrophes and non-ASCII text readable.</summary>
@@ -140,6 +164,7 @@ public partial class Json : JsonSerializerContext
         {
             Ts = e.Ts, Id = e.Id, Type = e.Type, Session = e.Session, Agent = e.Agent, Text = e.Text,
             Ref = e.Ref, Wt = e.Wt, Glob = e.Glob, Expires = e.Expires, Nonce = e.Nonce, Branch = e.Branch, Sha = e.Sha,
+            Device = e.Device, Client = e.Client,
         };
         return JsonSerializer.Serialize(copy, Wire.Entry);
     }

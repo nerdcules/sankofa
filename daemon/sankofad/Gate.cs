@@ -13,7 +13,11 @@ namespace Sankofa;
 /// </summary>
 static class Gate
 {
-    const int TimeoutMs = 50;
+    const int LocalTimeoutMs = 50;
+    /// <summary>For repos attached to a hub the claim travels on to it over the network (sankofad
+    /// itself gives up and allows-and-flags after SANKOFA_HUB_GATE_MS, default 150).</summary>
+    const int HubTimeoutMs = 250;
+    static int TimeoutMs = LocalTimeoutMs;
 
     static bool Off(string? root) =>
         Environment.GetEnvironmentVariable("SANKOFA_GATE") == "0" || (root is not null && Defaults.Config(root, "gate") == "0");
@@ -64,6 +68,7 @@ static class Gate
             .Select(p => (Path: p, Root: Defaults.FindRoot(Path.GetDirectoryName(p) ?? "/")))
             .Where(x => x.Root is not null && !Off(x.Root))
             .GroupBy(x => x.Root!);
+        if (byRepo.Any(g => Defaults.Config(g.Key, "hub_repo") is { Length: > 0 })) TimeoutMs = HubTimeoutMs;
         var denials = new List<string>();
         Conn? conn = null;
         bool reachable = true;
@@ -80,7 +85,7 @@ static class Gate
                     var resp = reachable && conn is not null
                         ? conn.Ask(new Request
                         {
-                            Verb = "claim", Repo = repo.Key, Glob = rel, Ttl = ttl,
+                            Verb = "claim", Repo = repo.Key, Glob = rel, Ttl = ttl, Client = $"gate:{client}",
                             Session = intent.Session, Agent = intent.Agent, Inherit = intent.Agent != "main", Idle = idle,
                         })
                         : null;
@@ -94,7 +99,7 @@ static class Gate
                     if (!resp.Ok) { Console.Error.WriteLine($"sankofa gate: {resp.Error}; allowing {rel}"); continue; }
                     if (resp.Granted == false)
                         denials.AddRange((resp.Conflicts ?? []).Select(c =>
-                            $"{rel} is leased to {c.Session} [{c.Agent}] as {c.Id} ({c.Glob}) until {c.Expires}"));
+                            $"{rel} is leased to {c.Session} [{c.Agent}]{(c.Device is null ? "" : $" on {c.Device}")} as {c.Id} ({c.Glob}) until {c.Expires}"));
                 }
             }
         }
@@ -127,7 +132,10 @@ static class Gate
                 Nonce = $"{DateTime.UtcNow.Ticks}-{Environment.ProcessId}",
             };
             if (tail.Contains("\"text\":" + JsonSerializer.Serialize(text, Json.Wire.String), StringComparison.Ordinal)) return;
-            e.Id = $"e{bytes.Count(b => b == (byte)'\n') + 1}";
+            // in a hub replica, lines written here are queued for the hub and carry an id of their own
+            e.Id = Defaults.Config(root, "hub_repo") is { Length: > 0 }
+                ? $"q{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}{Environment.ProcessId % 1000:000}"
+                : $"e{bytes.Count(b => b == (byte)'\n') + 1}";
             using var f = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
             f.Write(Encoding.UTF8.GetBytes(Json.Line(e) + "\n"));
         }

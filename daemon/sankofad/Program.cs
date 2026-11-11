@@ -13,6 +13,9 @@ using Sankofa;
 //   sankofad gate claude-code|codex        pre-edit hook: JSON payload on stdin, deny JSON on stdout
 //   sankofad gate git-pre-commit           refuse staged paths someone else holds (exit 1)
 //   sankofad mcp                           MCP server on stdio: the CLI's verbs as tools
+//   sankofad hub serve --listen URL [--db P] [--data DIR] [--tokens F]
+//                                          the hub: one ledger for many devices, over HTTP
+//   sankofad hub token add|revoke <device> | list [--tokens F]
 //   sankofad bench                         startup and ask round-trip timings, as JSON
 //   sankofad version
 
@@ -28,14 +31,15 @@ switch (cmd)
     case "serve": return Serve(Opt(args, "--socket", Defaults.Socket()), Opt(args, "--db", Defaults.Db()));
     case "send": return Send(Opt(args, "--socket", Defaults.Socket()));
     case "bench": return Bench.Run();
-    case "mcp" or "--mcp": return McpExec.Run(args[1..]);
+    case "mcp" or "--mcp": return SiblingExec.Run("sankofa-mcp", args[1..]);
+    case "hub": return SiblingExec.Run("sankofa-hub", args[1..]);
     case "gate" when args.Length > 1 && args[1] == "git-pre-commit": return Gate.PreCommit();
     case "gate" when args.Length > 1:
         try { return Gate.PreEdit(args[1]); }
         catch (SankofaException ex) { Console.Error.WriteLine($"sankofad gate: {ex.Message}"); return 1; }
     case "version" or "--version" or "-V": Console.WriteLine($"sankofad {Store.Version}"); return 0;
     default:
-        Console.Error.WriteLine("usage: sankofad serve [--socket P] [--db P] | send [--socket P] | gate claude-code|codex|git-pre-commit | mcp | bench | version");
+        Console.Error.WriteLine("usage: sankofad serve [--socket P] [--db P] | send [--socket P] | gate claude-code|codex|git-pre-commit | mcp | hub serve|token | bench | version");
         return cmd is "help" or "-h" or "--help" ? 0 : 2;
 }
 
@@ -57,7 +61,17 @@ static int Serve(string socket, string dbPath)
             RetryAfter = TimeSpan.FromSeconds(Defaults.Seconds("SANKOFA_BRIDGE_RETRY", 30)),
         };
         server.Overlaps = overlaps; server.Bridge = bridge;
-        overlaps.Start(); bridge.Start();
+        // 0.7: repos attached to a hub are served from there (hub.conf: url, token, device)
+        using var link = new HubLink(store, Defaults.HubConf())
+        {
+            Timeout = TimeSpan.FromSeconds(Defaults.Seconds("SANKOFA_HUB_TIMEOUT", 3)),
+            GateTimeout = TimeSpan.FromMilliseconds(Defaults.Seconds("SANKOFA_HUB_GATE_MS", 150)),
+            Breaker = TimeSpan.FromSeconds(Defaults.Seconds("SANKOFA_HUB_BREAKER", 2)),
+            MaxBackoff = TimeSpan.FromSeconds(Defaults.Seconds("SANKOFA_HUB_RETRY_MAX", 10)),
+            StreamSilence = TimeSpan.FromSeconds(Defaults.Seconds("SANKOFA_HUB_SILENCE", 45)),
+        };
+        server.Link = link;
+        link.Start(); overlaps.Start(); bridge.Start();
         Console.Error.WriteLine($"sankofad {Store.Version}: listening on {socket}, db {dbPath}");
         server.RunAsync(listener, cts.Token).GetAwaiter().GetResult();
         return 0;
@@ -93,19 +107,20 @@ static int Send(string socket)
     return line.StartsWith("{\"ok\":true", StringComparison.Ordinal) ? 0 : 1;
 }
 
-/// <summary>`sankofad mcp` becomes sankofa-mcp (execv: same process, same stdio, no relay).</summary>
-static partial class McpExec
+/// <summary>`sankofad mcp` becomes sankofa-mcp, `sankofad hub` sankofa-hub (execv: same process,
+/// same stdio, no relay). They are separate binaries so the per-edit gate stays small and fast.</summary>
+static partial class SiblingExec
 {
     [System.Runtime.InteropServices.LibraryImport("libc", SetLastError = true, StringMarshalling = System.Runtime.InteropServices.StringMarshalling.Utf8)]
     private static partial int execv(string path, string?[] argv);
 
-    public static int Run(string[] rest)
+    public static int Run(string name, string[] rest)
     {
         var self = Environment.ProcessPath is { } p ? new FileInfo(p).ResolveLinkTarget(true)?.FullName ?? p : "";
-        var sibling = Path.Combine(Path.GetDirectoryName(self) ?? ".", "sankofa-mcp");
+        var sibling = Path.Combine(Path.GetDirectoryName(self) ?? ".", name);
         var target = File.Exists(sibling) ? sibling
-                   : (Environment.GetEnvironmentVariable("PATH") ?? "").Split(':').Select(d => Path.Combine(d, "sankofa-mcp")).FirstOrDefault(File.Exists);
-        if (target is null) { Console.Error.WriteLine("sankofad: sankofa-mcp not found next to sankofad or on PATH"); return 1; }
+                   : (Environment.GetEnvironmentVariable("PATH") ?? "").Split(':').Select(d => Path.Combine(d, name)).FirstOrDefault(File.Exists);
+        if (target is null) { Console.Error.WriteLine($"sankofad: {name} not found next to sankofad or on PATH"); return 1; }
         execv(target, [target, .. rest, null]);
         Console.Error.WriteLine($"sankofad: could not run {target} (errno {System.Runtime.InteropServices.Marshal.GetLastPInvokeError()})");
         return 1;

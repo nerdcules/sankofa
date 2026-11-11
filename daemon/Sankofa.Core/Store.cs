@@ -15,11 +15,11 @@ public sealed class SankofaException(string message) : Exception(message);
 /// </summary>
 public sealed partial class Store : IDisposable
 {
-    public const string Version = "0.6.0";
+    public const string Version = "0.7.0";
     public const long DefaultTtlSeconds = 1800;
     static readonly HashSet<string> AppendTypes = ["note", "todo", "awaiting", "stop", "flag"];
-    const string Cols = "seq, repo, id, ts, type, session, agent, text, ref, wt, glob, expires, nonce, branch, sha";
-    const string LeaseCols = "id, glob, session, agent, claimed, expires, dirty, state";
+    const string Cols = "seq, repo, id, ts, type, session, agent, text, ref, wt, glob, expires, nonce, branch, sha, device, client";
+    const string LeaseCols = "id, glob, session, agent, claimed, expires, dirty, state, device";
 
     readonly Db db;
     readonly Func<DateTimeOffset> clock;
@@ -79,7 +79,13 @@ public sealed partial class Store : IDisposable
         // 0.6: landed events name a branch and a commit
         try { db.Exec("ALTER TABLE events ADD COLUMN branch TEXT"); } catch (SqliteException) { }
         try { db.Exec("ALTER TABLE events ADD COLUMN sha TEXT"); } catch (SqliteException) { }
+        // 0.7: a hub records which device and client wrote each event
+        try { db.Exec("ALTER TABLE events ADD COLUMN device TEXT"); } catch (SqliteException) { }
+        try { db.Exec("ALTER TABLE events ADD COLUMN client TEXT"); } catch (SqliteException) { }
+        db.Exec("CREATE INDEX IF NOT EXISTS events_nonce ON events(repo, nonce)");
+        try { db.Exec("ALTER TABLE leases ADD COLUMN device TEXT"); } catch (SqliteException) { }
         InitWatch();
+        InitHub();
     }
 
     public const long DefaultHandoverIdleSeconds = 5;
@@ -102,6 +108,7 @@ public sealed partial class Store : IDisposable
         lock (gate)
         {
             repo = RepoKey(repo);
+            if (ByNonce(repo, nonce) is { } dup) return dup;   // a retry of a write whose answer was lost
             ExpireDue(repo);
             return AppendLocked(repo, new Entry
             {
@@ -118,6 +125,7 @@ public sealed partial class Store : IDisposable
         {
             repo = RepoKey(repo);
             SyncLocked(repo); ExpireDue(repo);
+            if (ByNonce(repo, nonce) is { } dup) return dup;
             var e = Get(repo, id) ?? throw new SankofaException($"no open item with id {id}");
             switch (e.Type)
             {
@@ -150,7 +158,7 @@ public sealed partial class Store : IDisposable
     /// <paramref name="idleSeconds"/>: handing over a file mid-edit would clobber the parent's edit.
     /// The parent's lease is released with a note saying so.</param>
     public ClaimResult Claim(string repo, string glob, string? session, string? agent, long? ttlSeconds = null,
-                             string? wt = null, bool inherit = false, long? idleSeconds = null)
+                             string? wt = null, bool inherit = false, long? idleSeconds = null, string? why = null)
     {
         session ??= "-"; agent ??= "main";
         glob = Glob.Normalize(glob);
@@ -166,7 +174,7 @@ public sealed partial class Store : IDisposable
             {
                 var ev = AppendLocked(repo, new Entry
                 {
-                    Type = "renew", Text = $"renew {glob}", Ref = mine.Id, Glob = glob, Expires = expires,
+                    Type = "renew", Text = $"renew {glob}{why}", Ref = mine.Id, Glob = glob, Expires = expires,
                     Session = session, Agent = agent, Wt = wt,
                 });
                 return new(true, true, ev, GetLease(repo, mine.Id), [], []);
@@ -189,8 +197,8 @@ public sealed partial class Store : IDisposable
                 var ev = AppendLocked(repo, new Entry
                 {
                     Type = "contend", Glob = glob, Session = session, Agent = agent, Wt = wt,
-                    Text = $"claim on {glob} overlaps " + string.Join("; ", conflicts.Select(c =>
-                        $"{c.Id} {c.Glob} held by {c.Session} [{c.Agent}] until {c.Expires}")),
+                    Text = $"claim on {glob}{why} overlaps " + string.Join("; ", conflicts.Select(c =>
+                        $"{c.Id} {c.Glob} held by {c.Session} [{c.Agent}]{(c.Device is null ? "" : " on " + c.Device)} until {c.Expires}")),
                 });
                 return new(false, false, ev, null, conflicts, []);
             }
@@ -198,7 +206,7 @@ public sealed partial class Store : IDisposable
                 .Where(l => Glob.Overlap(l.Glob, glob)).ToList();
             var claim = AppendLocked(repo, new Entry
             {
-                Type = "claim", Text = $"claim {glob}", Glob = glob, Expires = expires,
+                Type = "claim", Text = $"claim {glob}{why}", Glob = glob, Expires = expires,
                 Session = session, Agent = agent, Wt = wt,
             });
             return new(true, false, claim, GetLease(repo, claim.Id), [], warnings);
@@ -254,7 +262,7 @@ public sealed partial class Store : IDisposable
             {
                 var repos = db.Query("SELECT DISTINCT repo FROM leases WHERE state='held' AND session=?", session)
                               .Select(r => (string)r[0]!).ToList();
-                return repos.Where(Directory.Exists).SelectMany(r => Finish(r, session, agent, text)).ToList();
+                return repos.Where(r => Directory.Exists(r) && !Replicated(r)).SelectMany(r => Finish(r, session, agent, text)).ToList();
             }
             repo = RepoKey(repo);
             SyncLocked(repo); ExpireDue(repo);
@@ -353,6 +361,7 @@ public sealed partial class Store : IDisposable
 
     long SyncLocked(string repo)
     {
+        if (Replicated(repo)) throw new SankofaException($"{repo} is replicated from a hub; sankofad forwards its verbs there");
         using var _ = FileLock(repo);
         var path = LedgerPath(repo);
         if (!File.Exists(path)) File.WriteAllText(path, "");
@@ -425,12 +434,13 @@ public sealed partial class Store : IDisposable
         db.Run("INSERT INTO repos(repo,size,count) VALUES(?,?,?) ON CONFLICT(repo) DO UPDATE SET size=excluded.size, count=excluded.count",
                repo, size, count);
 
-    Entry AppendLocked(string repo, Entry e)
+    Entry AppendLocked(string repo, Entry e, bool keepTs = false)
     {
         using var _ = FileLock(repo);
         long count = SyncLocked(repo);
         e.Id = $"e{count + 1}";
-        e.Ts = Now();
+        if (!keepTs || string.IsNullOrEmpty(e.Ts)) e.Ts = Now();
+        if (stamp is { } st) { e.Device = st.Device; e.Client ??= st.Client; }
         e.Repo = repo;
         var path = LedgerPath(repo);
         db.Exec("BEGIN IMMEDIATE");
@@ -453,10 +463,10 @@ public sealed partial class Store : IDisposable
 
     long Insert(string repo, Entry e, string source) =>
         (long)db.Query("""
-            INSERT INTO events(repo,id,ts,type,session,agent,text,ref,wt,glob,expires,nonce,branch,sha,source)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING seq
+            INSERT INTO events(repo,id,ts,type,session,agent,text,ref,wt,glob,expires,nonce,branch,sha,device,client,source)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING seq
             """, repo, e.Id, e.Ts, e.Type, e.Session, e.Agent, e.Text, e.Ref, e.Wt, e.Glob, e.Expires, e.Nonce,
-                 e.Branch, e.Sha, source)[0][0]!;
+                 e.Branch, e.Sha, e.Device, e.Client, source)[0][0]!;
 
     /// <summary>Lease state follows from events; imported events go through here too.</summary>
     void Apply(string repo, Entry e)
@@ -464,8 +474,8 @@ public sealed partial class Store : IDisposable
         switch (e.Type)
         {
             case "claim" when e.Glob is not null && e.Expires is not null:
-                db.Run("INSERT OR REPLACE INTO leases(repo,id,glob,session,agent,claimed,expires,dirty,state,touched) VALUES(?,?,?,?,?,?,?,1,'held',?)",
-                       repo, e.Id, e.Glob, e.Session, e.Agent, e.Ts, e.Expires, e.Ts);
+                db.Run("INSERT OR REPLACE INTO leases(repo,id,glob,session,agent,claimed,expires,dirty,state,touched,device) VALUES(?,?,?,?,?,?,?,1,'held',?,?)",
+                       repo, e.Id, e.Glob, e.Session, e.Agent, e.Ts, e.Expires, e.Ts, e.Device);
                 break;
             case "renew" when e.Ref is not null && e.Expires is not null:
                 db.Run("UPDATE leases SET expires=?, touched=? WHERE repo=? AND id=? AND state='held'", e.Expires, e.Ts, repo, e.Ref);
@@ -500,6 +510,9 @@ public sealed partial class Store : IDisposable
     string Touched(string repo, string id) =>
         db.Scalar("SELECT COALESCE(touched, claimed) FROM leases WHERE repo=? AND id=?", repo, id) as string ?? "";
 
+    Entry? ByNonce(string repo, string? nonce) =>
+        string.IsNullOrEmpty(nonce) ? null : Rows($"SELECT {Cols} FROM events WHERE repo=? AND nonce=? ORDER BY seq LIMIT 1", repo, nonce).FirstOrDefault();
+
     Entry? Get(string repo, string id) =>
         Rows($"SELECT {Cols} FROM events WHERE repo=? AND id=?", repo, id).FirstOrDefault();
 
@@ -510,7 +523,7 @@ public sealed partial class Store : IDisposable
           .Select(r => new Lease
           {
               Id = (string)r[0]!, Glob = (string)r[1]!, Session = (string)r[2]!, Agent = (string)r[3]!,
-              Claimed = (string)r[4]!, Expires = (string)r[5]!, Dirty = (long)r[6]! != 0, State = (string)r[7]!,
+              Claimed = (string)r[4]!, Expires = (string)r[5]!, Dirty = (long)r[6]! != 0, State = (string)r[7]!, Device = (string?)r[8],
           }).ToList();
 
     List<Entry> Rows(string sql, params object?[] args) =>
@@ -519,6 +532,6 @@ public sealed partial class Store : IDisposable
             Seq = (long)r[0]!, Repo = (string)r[1]!, Id = (string)r[2]!, Ts = (string)r[3]!, Type = (string)r[4]!,
             Session = (string)r[5]!, Agent = (string)r[6]!, Text = (string)r[7]!, Ref = (string?)r[8],
             Wt = (string?)r[9], Glob = (string?)r[10], Expires = (string?)r[11], Nonce = (string?)r[12],
-            Branch = (string?)r[13], Sha = (string?)r[14],
+            Branch = (string?)r[13], Sha = (string?)r[14], Device = (string?)r[15], Client = (string?)r[16],
         }).ToList();
 }

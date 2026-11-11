@@ -30,13 +30,20 @@ if [ -x "$ROOT/bin/out/sankofad" ]; then
   [ -L "$HOME/.local/bin/sankofad" ] || fail "daemon symlink missing"
   [ -L "$HOME/.local/bin/sankofa-mcp" ] || fail "MCP server symlink missing"
   assert_contains "$(cat "$UD")" "ExecStart=$HOME/.local/bin/sankofad serve" "daemon unit points at the daemon"
+  [ -L "$HOME/.local/bin/sankofa-hub" ] || fail "hub symlink missing"
 fi
+UH=$HOME/.config/systemd/user/sankofa-hub.service
+[ ! -e "$UH" ] || fail "the hub unit is only installed with --hub"
+SANKOFA_HUB_LISTEN=http://100.64.0.7:8787/ "$ROOT/install.sh" --hub >/dev/null
+assert_contains "$(cat "$UH")" "ExecStart=$HOME/.local/bin/sankofa-hub serve --listen http://100.64.0.7:8787/" "hub unit with its address"
 [ -L "$HOME/.local/bin/sankofa-watch" ] || fail "watcher symlink missing"
 assert_contains "$(cat "$U")" "ExecStart=$HOME/.local/bin/sankofa-watch" "unit points at the watcher"
 
 "$ROOT/install.sh" --uninstall >/dev/null
 [ ! -e "$U" ] || fail "unit not removed"
 [ ! -e "$UD" ] || fail "daemon unit not removed"
+[ ! -e "$UH" ] || fail "hub unit not removed"
+[ ! -e "$HOME/.local/bin/sankofa-hub" ] || fail "hub symlink not removed"
 assert_eq "$(grep -c sankofa "$CODEX_HOME/config.toml" || true)" 0 "Codex registration removed"
 assert_contains "$(cat "$CODEX_HOME/config.toml")" "[mcp_servers.other]" "other Codex servers kept"
 [ ! -e "$HOME/.local/bin/sankofad" ] || fail "daemon symlink not removed"

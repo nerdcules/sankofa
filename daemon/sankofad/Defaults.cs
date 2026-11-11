@@ -24,6 +24,23 @@ static class Defaults
         return Path.Combine(data, "sankofa", "sankofa.db");
     }
 
+    static string Xdg(string var, params string[] fallback)
+    {
+        var v = Environment.GetEnvironmentVariable(var);
+        return string.IsNullOrEmpty(v) ? Path.Combine([Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), .. fallback]) : v;
+    }
+
+    /// <summary>This device's hub client config: url=, token=, device= (sankofa hub join).</summary>
+    public static string HubConf() =>
+        Environment.GetEnvironmentVariable("SANKOFA_HUB_CONF") is { Length: > 0 } p ? p : Path.Combine(Xdg("XDG_CONFIG_HOME", ".config"), "sankofa", "hub.conf");
+
+    /// <summary>On the hub box: device token hashes, and where the hub keeps its ledgers.</summary>
+    public static string HubTokens() =>
+        Environment.GetEnvironmentVariable("SANKOFA_HUB_TOKENS") is { Length: > 0 } p ? p : Path.Combine(Xdg("XDG_CONFIG_HOME", ".config"), "sankofa", "hub-tokens");
+
+    public static string HubData() =>
+        Environment.GetEnvironmentVariable("SANKOFA_HUB_DATA") is { Length: > 0 } p ? p : Path.Combine(Xdg("XDG_DATA_HOME", ".local", "share"), "sankofa", "hub");
+
     /// <summary>The repo root: the nearest directory at or above <paramref name="dir"/> holding .sankofa/.</summary>
     public static string? FindRoot(string dir)
     {
