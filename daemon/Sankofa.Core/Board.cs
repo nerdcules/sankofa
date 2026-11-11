@@ -27,8 +27,10 @@ public sealed class Board
     sealed class Repo
     {
         public readonly Dictionary<string, Item> Items = [];
-        public readonly HashSet<string> Resolved = [];
         public readonly Dictionary<string, L> Leases = [];
+        /// <summary>Ended leases still marked half-finished: the only ones a later done can clear,
+        /// kept apart so a done does not look at every lease the repo ever had.</summary>
+        public readonly HashSet<L> DirtyEnded = [];
         public readonly Dictionary<string, Word> Words = [];   // by session
         public readonly List<Alert> Alerts = [];
         public int Events;
@@ -65,17 +67,24 @@ public sealed class Board
                 break;
             case "release" when e.Ref is not null && r.Leases.TryGetValue(e.Ref, out var l):
                 l.State = "released";
+                if (l.Dirty) r.DirtyEnded.Add(l);
                 break;
             case "expire" when e.Ref is not null && r.Leases.TryGetValue(e.Ref, out var l):
                 l.State = "expired";
+                if (l.Dirty) r.DirtyEnded.Add(l);
                 break;
             case "done" when e.Ref is not null:
-                if (r.Items.ContainsKey(e.Ref)) r.Resolved.Add(e.Ref);
-                else if (r.Leases.TryGetValue(e.Ref, out var d))
+                // a resolved item or a finished lease is never shown again, so neither is kept
+                if (r.Items.Remove(e.Ref)) break;
+                if (r.Leases.Remove(e.Ref, out var d))
                 {
                     d.State = "done"; d.Dirty = false;
-                    foreach (var old in r.Leases.Values)
-                        if (old.Dirty && old.State != "held" && Glob.Overlap(d.Glob, old.Glob)) old.Dirty = false;
+                    r.DirtyEnded.Remove(d);
+                    // the done vouches for what it covers: ended leases there are no longer half-finished
+                    foreach (var old in r.DirtyEnded.Where(o => Glob.Overlap(d.Glob, o.Glob)).ToList())
+                    {
+                        old.Dirty = false; r.DirtyEnded.Remove(old); r.Leases.Remove(old.Id);
+                    }
                 }
                 break;
             case "overlap" or "landed" or "flag" or "contend":
@@ -94,7 +103,7 @@ public sealed class Board
     public List<string> Repos() => repos.Keys.Order(StringComparer.Ordinal).ToList();
 
     public List<Item> Open(string? repo = null, params string[] types) =>
-        Pick(repo).SelectMany(r => r.Items.Values.Where(i => !r.Resolved.Contains(i.Id)))
+        Pick(repo).SelectMany(r => r.Items.Values)
             .Where(i => types.Length == 0 || types.Contains(i.Type))
             .OrderByDescending(i => i.Ts, StringComparer.Ordinal).ToList();
 

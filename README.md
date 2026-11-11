@@ -32,7 +32,7 @@ sankofad ── SQLite, append-only events, leases with expiry
 
 ## Status
 
-Iteration 0.10: shell ledger, Stop hooks, desktop toasts for items that need
+Iteration 0.11: shell ledger, Stop hooks, desktop toasts for items that need
 you, `sankofad` (an SQLite event log and path leases), the gates (every edit
 is leased before it happens; git refuses commits on someone else's paths), an
 MCP server so any MCP client can use the ledger without a shell, and detection
@@ -40,7 +40,8 @@ where prevention is not possible: two worktrees changing one path, and work
 that landed on a remote while you were away. A hub shares one ledger and one
 lease table between your machines, and with cloud sessions over MCP. A
 terminal dashboard (`sankofa dash`) shows all of it in one screen, and a
-handoff passes a branch with its context to a teammate. See `docs/ROADMAP.md` for what comes next. Each iteration ships with
+handoff passes a branch with its context to a teammate, and survives being cut
+off halfway. See `docs/ROADMAP.md` for what comes next. Each iteration ships with
 tests, and its usage gate is run as an accelerated simulation (`sim/`) against
 the real code before the next starts.
 
@@ -223,7 +224,18 @@ removes the ref from the remote, so nobody picks it up twice. The bridge
 (`sankofa bridge on`) also fetches handoff refs: a new one is recorded and
 toasted ("handed off to you", with the `pickup` line), never on the machine
 that sent it, and when the ref is gone from the remote the sender's open
-handoff is finished as picked up.
+handoff is finished as picked up, by whom (pickup leaves a marker at
+`refs/sankofa/taken/<branch>`, in the same atomic push that removes the letter).
+
+A handoff or pickup cut off halfway (a killed session, a dropped connection)
+is finished by running the same command again: each keeps a journal in
+`.sankofa/` while it runs, and `sankofa open` says when one was interrupted.
+Running a finished handoff again changes nothing. A handoff also finishes the
+leases its session holds in the repo, so through a hub the teammate is not
+blocked by them. With several remotes and none called `origin`, a branch that
+tracks no remote is refused rather than pushed to a guess. If the branch is
+rewritten or deleted on the remote after the handoff, pickup still lands on the
+handed-off commit (the letter holds it) and says what happened to the branch.
 
 ## Hub: one ledger for every device
 
@@ -319,7 +331,11 @@ python3 sim/overlap.py  # agents in several worktrees: overlaps missed, false, o
 python3 sim/overnight.py # routines pushing overnight while the laptop sleeps: one landed and one toast each
 python3 sim/hub.py      # desk, laptop and a cloud session on one hub, with cuts, dead routes and restarts
 python3 sim/handoff.py  # four people handing branches to each other through one git remote:
-                        # nothing lost, nothing picked up twice (also when two race for one)
+                        # nothing lost, nothing picked up twice (also when two race for one);
+                        # --hub: the same with the ledger shared through a hub
+python3 sim/crash.py    # handoff and pickup killed before and after every step, then run again;
+                        # with and without a hub, and a remote that refuses refs/sankofa/*
+python3 sim/compat.py   # an upgrade over an old database, and teams that have not all upgraded
 python3 sim/hub.py --docker --skew 90  # the same with hub, desk and laptop as separate containers:
                         # set up by install.sh, unplugged, firewalled, paused (lid shut), rebooted,
                         # the hub box crashed, the laptop's clock 90 s ahead (needs docker)

@@ -52,6 +52,27 @@ public class BoardTests : IDisposable
     }
 
     [Fact]
+    public void ALongLedgerFoldsInLinearTime()
+    {
+        // 0.11: every done used to look at every lease the repo ever had, so a year of edit-gate
+        // leases took the dashboard 25 s to open; now each done looks only at ended, dirty ones
+        var b = new Board();
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        for (var i = 0; i < 100_000; i++)
+        {
+            b.Ingest("r", new Entry { Id = $"c{i}", Type = "claim", Glob = $"src/m{i % 3000}/f{i % 50}.cs", Session = "s", Ts = "2026-11-11T09:00:00.000Z", Text = "" });
+            b.Ingest("r", new Entry { Id = $"d{i}", Type = "done", Ref = $"c{i}", Session = "s", Ts = "2026-11-11T09:00:01.000Z", Text = "" });
+        }
+        b.Ingest("r", new Entry { Id = "x", Type = "claim", Glob = "src/m1/*", Session = "s", Ts = "2026-11-11T09:00:00.000Z", Text = "" });
+        b.Ingest("r", new Entry { Id = "y", Type = "expire", Ref = "x", Session = "sankofad", Ts = "2026-11-11T09:30:00.000Z", Text = "" });
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(5), $"took {sw.Elapsed}");
+        Assert.Equal("x", Assert.Single(b.Leases(Now)).Id);   // finished leases are gone, the dirty one stays
+        b.Ingest("r", new Entry { Id = "z", Type = "claim", Glob = "src/m1/f1.cs", Session = "t", Ts = "2026-11-11T09:40:00.000Z", Text = "" });
+        b.Ingest("r", new Entry { Id = "w", Type = "done", Ref = "z", Session = "t", Ts = "2026-11-11T09:41:00.000Z", Text = "" });
+        Assert.Empty(b.Leases(Now));   // a done under the dirty one settles it
+    }
+
+    [Fact]
     public void AHeldLeasePastItsTimeIsExpired()
     {
         var b = new Board();

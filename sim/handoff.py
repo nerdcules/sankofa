@@ -32,7 +32,19 @@ urg=normal
 while [ $# -gt 2 ]; do case $1 in -u) urg=$2; shift 2 ;; -a) shift 2 ;; *) shift ;; esac; done
 python3 -c 'import json,sys; print(json.dumps({"u":sys.argv[1],"title":sys.argv[2],"body":sys.argv[3]}))' "$urg" "$1" "$2" >> "$TOASTS"
 """
-PEOPLE = ["Alice", "Bob", "Carol", "Dan"]   # Dan: no daemon, no bridge, no watcher
+PEOPLE = ["Alice", "Bob", "Carol", "Dan"]
+
+
+def snapshot(tmp):
+    """Run a copy of the CLI, so editing bin/ while a simulation runs cannot change it underneath
+    (sh reads a script as it goes). The copy finds sankofad where the original does."""
+    global S, WATCH
+    b = os.path.join(tmp, "bin"); os.makedirs(b, exist_ok=True)
+    for f in ("sankofa", "sankofa-watch"):
+        shutil.copy2(os.path.join(ROOT, "bin", f), b)
+    if not os.path.exists(os.path.join(b, "out")): os.symlink(os.path.join(ROOT, "bin", "out"), os.path.join(b, "out"))
+    S, WATCH = os.path.join(b, "sankofa"), os.path.join(b, "sankofa-watch")
+    return S, WATCH   # Dan: no daemon, no bridge, no watcher
 
 
 class Person:
@@ -114,15 +126,20 @@ def remote_refs(p):
     return heads, letters
 
 
-def one(seed, steps, tmp):
-    team = []
+HUB = None   # set by --hub: (url, env for the hub's token tool), and the hub process
+
+
+def one(seed, steps, tmp, hub=False):
+    team, hp = [], []
     try:
-        return week(seed, steps, tmp, team)
+        return week(seed, steps, tmp, team, hub, hp)
     finally:
         for p in team: p.stop()
+        for h in hp:
+            if h.poll() is None: h.send_signal(signal.SIGTERM); h.wait()
 
 
-def week(seed, steps, tmp, team):
+def week(seed, steps, tmp, team, hub=False, hp=()):
     rnd = random.Random(seed)
     base = tempfile.mkdtemp(prefix=f"team{seed}-", dir=tmp)
     remote = os.path.join(base, "remote.git")
@@ -133,8 +150,25 @@ def week(seed, steps, tmp, team):
     g = lambda *a: subprocess.run(["git", "-c", "user.name=s", "-c", "user.email=s@x", *a], cwd=seedrepo, check=True, capture_output=True)
     g("add", "-A"); g("commit", "-qm", "init"); g("push", "-q", "origin", "main")
     team.extend(Person(n, base, remote) for n in PEOPLE)
+    if hub:
+        import socket, urllib.request
+        sk = socket.socket(); sk.bind(("127.0.0.1", 0)); port = sk.getsockname()[1]; sk.close()
+        url = f"http://127.0.0.1:{port}"
+        hd = os.path.join(base, "hub"); os.makedirs(hd)
+        henv = dict(os.environ, SANKOFA_HUB_TOKENS=os.path.join(hd, "tokens"), SANKOFA_HUB_DATA=os.path.join(hd, "data"))
+        hp.append(subprocess.Popen([D, "hub", "serve", "--listen", url + "/", "--db", os.path.join(hd, "hub.db")], env=henv,
+                                   stdout=subprocess.DEVNULL, stderr=open(os.path.join(hd, "log"), "a")))
+        for _ in range(300):
+            try: urllib.request.urlopen(url + "/healthz", timeout=0.2); break
+            except Exception: time.sleep(0.02)
+        for p in team:   # through a hub everyone runs sankofad: it is what talks to the hub
+            p.daemon = True; p.env.pop("SANKOFA_NO_DAEMON", None)
+            p.env.update(SANKOFA_HUB_BREAKER="0.3", SANKOFA_HUB_RETRY_MAX="0.5", SANKOFA_HUB_TIMEOUT="1")
+            tok = subprocess.run([D, "hub", "token", "add", p.name.lower() + "-pc"], env=henv, capture_output=True, text=True).stdout.strip()
+            assert p.sk("hub", "join", url, tok, p.name.lower() + "-pc").returncode == 0
     for p in team:
         p.start(); p.sk("init")
+        if hub: assert p.sk("hub", "on", "demo").returncode == 0
         if p.daemon:
             assert p.sk("bridge", "on", "1h").returncode == 0, p.sk("bridge", "on", "1h").stderr
             p.sk("watch", "add", "."); p.watch()
@@ -177,6 +211,7 @@ def week(seed, steps, tmp, team):
             diverged = subprocess.run(["git", "merge-base", "--is-ancestor", f"refs/heads/{target}", offer[target]],
                                       cwd=q.dir).returncode != 0
         before_todos = len(q.open_items("todo"))
+        before_texts = {e["text"] for e in q.open_items("todo")}
         r = q.sk("pickup", *([arg] if arg else []))
         out = r.stdout + r.stderr
         if dirty:
@@ -211,11 +246,24 @@ def week(seed, steps, tmp, team):
         if subprocess.run(["git", "merge-base", "--is-ancestor", h["sha"], "HEAD"], cwd=q.dir).returncode != 0:
             st["pickup not containing handoff"] += 1
         if h["token"] not in out: bad(f"{q.name} pickup did not print the letter")
+        sync()
         got = len(q.open_items("todo")) - before_todos
-        st["todos carried"] += got; st["todos expected"] += h["todos"]
+        # through a hub the open items are shared already: a pickup adds none
+        st["todos carried"] += got; st["todos expected"] += 0 if hub else len(set(h["todos"]) - before_texts)
         return h
 
+    def sync():
+        """Through a hub: wait until every replica holds the same events."""
+        if not hub: return
+        end = time.time() + 5
+        while time.time() < end:
+            ids = [[e["id"] for e in p.ledger()] for p in team]
+            if all(i == ids[0] for i in ids): return
+            time.sleep(0.03)
+        unexpected.append("replicas did not converge in 5 s")
+
     for step in range(steps):
+        sync()
         st["steps"] += 1
         p = rnd.choice(team)
         act = rnd.choices(["work", "todo", "handoff", "pickup", "race", "rehand", "fetch", "clean", "resume"],
@@ -259,7 +307,7 @@ def week(seed, steps, tmp, team):
             p.git("fetch", "-q", "origin", check=False)
             behind = p.git("rev-parse", "-q", "--verify", f"refs/remotes/origin/{b}", check=False) and \
                 subprocess.run(["git", "merge-base", "--is-ancestor", f"refs/remotes/origin/{b}", "HEAD"], cwd=p.dir).returncode != 0
-            todos = len(p.open_items("todo"))
+            todos = [f"{e['text']} (from {p.name}, was {e['id']})" for e in p.open_items("todo")]
             token = f"[T{seed}-{step}]"
             r = p.sk("handoff", f"{p.name} hands off {b} {token}")
             out = r.stdout + r.stderr
@@ -271,7 +319,7 @@ def week(seed, steps, tmp, team):
                 if r.returncode == 0 or "pull them first" not in out: bad(f"{p.name} handoff behind the remote: {out[:120]}")
                 else: st["handoffs refused (behind)"] += 1
                 continue
-            if r.returncode != 0: bad(f"{p.name} handoff {b} failed: {out[:160]}"); continue
+            if r.returncode != 0: bad(f"{p.name} handoff {b} failed ({r.returncode}): {out[:600]}"); continue
             sha = p.git("rev-parse", "HEAD")
             heads, letters = remote_refs(p)
             if heads.get(b) != sha: bad(f"{p.name} handoff: remote {b} not at the commit")
@@ -337,7 +385,9 @@ def week(seed, steps, tmp, team):
         st["open handoffs wrong at end"] += len(extra) + len(missing)
         if extra or missing: unexpected.append(f"{p.name} open handoffs: extra {sorted(extra)} missing {sorted(missing)}")
         led = p.ledger()
-        recorded = [e for e in led if e["type"] == "handoff" and e["session"] == "sankofad"]
+        # what this machine should have toasted: the bridge's records, or through a hub every other device's handoff
+        recorded = [e for e in led if e["type"] == "handoff" and
+                    (e.get("device") not in (None, p.name.lower() + "-pc") if hub else e["session"] == "sankofad")]
         toasts = [t for t in p.toast_list() if t["title"].endswith("handed off to you")]
         st["toasts"] += len(toasts)
         for e in recorded:
@@ -361,20 +411,23 @@ def week(seed, steps, tmp, team):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--seeds", type=int, default=3)
+    ap.add_argument("--first", type=int, default=0, help="first seed")
     ap.add_argument("--steps", type=int, default=150)
     ap.add_argument("--out")
+    ap.add_argument("--hub", action="store_true", help="share the ledger through a hub (everyone runs sankofad)")
     a = ap.parse_args()
     tmp = tempfile.mkdtemp(prefix="sk-team-", dir=os.environ.get("XDG_RUNTIME_DIR") or "/tmp")
+    snapshot(tmp)
     t0 = time.time()
     runs = []
-    for s in range(a.seeds):
-        st, un = one(s, a.steps, tmp)
+    for s in range(a.first, a.first + a.seeds):
+        st, un = one(s, a.steps, tmp, a.hub)
         print(f"seed {s}: " + ", ".join(f"{k} {v}" for k, v in st.items() if v), file=sys.stderr)
         for u in un[:8]: print(f"  ! {u}", file=sys.stderr)
         runs.append(st)
     shutil.rmtree(tmp, ignore_errors=True)
     tot = {k: sum(r[k] for r in runs) for k in runs[0]}
-    out = [f"# Accelerated team weeks (handoff): {a.seeds} seeds x {a.steps} steps, 4 people", "",
+    out = [f"# Accelerated team weeks (handoff{', through a hub' if a.hub else ''}): {a.seeds} seeds x {a.steps} steps, 4 people", "",
            "| measure | total |", "|---|---|"] + [f"| {k} | {v} |" for k, v in tot.items()]
     out += ["", f"Wall time {time.time() - t0:.0f} s"]
     text = "\n".join(out) + "\n"

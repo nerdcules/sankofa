@@ -53,13 +53,16 @@ assert_eq "$(git rev-parse HEAD)" "$(git -C "$T/alice" rev-parse HEAD)" "at Alic
 assert_eq "$(git rev-parse --abbrev-ref '@{u}')" origin/parser "tracking the remote branch"
 assert_eq "$(jq -r 'select(.type=="handoff") | .id' .sankofa/ledger.jsonl | while read -r i; do jq -c --arg i "$i" 'select(.type=="done" and .ref==$i)' .sankofa/ledger.jsonl; done | grep -c .)" 1 "the handoff is finished"
 assert_contains "$("$S" open)" "error messages for bad input (from Alice, was e1)" "Alice's open items are Bob's todos now"
-assert_eq "$(git ls-remote "$T/remote.git" 'refs/sankofa/*' | grep -c . || :)" 0 "the letter is gone from the remote"
+assert_eq "$(git ls-remote "$T/remote.git" 'refs/sankofa/handoff/*' | grep -c . || :)" 0 "the letter is gone from the remote"
+assert_eq "$(git ls-remote "$T/remote.git" refs/sankofa/taken/parser | grep -c . || :)" 1 "a marker says it was taken"
+git fetch -q "$T/remote.git" refs/sankofa/taken/parser
+assert_contains "$(git cat-file tag FETCH_HEAD)" "tagger Bob" "and by whom"
 assert_eq "$(as Bob "$S" pickup)" "nothing handed off" "nothing left to pick up"
 
 # Alice's bridge sees it taken
 cd "$T/alice"
 "$S" bridge on 1h >/dev/null
-assert_contains "$(jq -r 'select(.type=="done") | .text' .sankofa/ledger.jsonl)" "picked up: the handoff of origin/parser is gone" "the sender's handoff is finished"
+assert_contains "$(jq -r 'select(.type=="done") | .text' .sankofa/ledger.jsonl)" "picked up by Bob: the handoff of origin/parser is gone" "the sender's handoff is finished, naming who took it"
 assert_eq "$("$S" open | grep -c handoff || :)" 0 "and no longer open"
 
 # and back, to someone with no daemon and no bridge

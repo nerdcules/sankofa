@@ -6,7 +6,7 @@
 # POSIX sh + jq.
 set -eu
 
-VERSION=0.10.2
+VERSION=0.11.0
 
 usage() {
   cat <<'USAGE'
@@ -18,8 +18,10 @@ usage: sankofa <command> [args]
   awaiting <text>      record an item that needs the human (prints its id)
   done <id> [text]     resolve a todo or awaiting item, or finish a lease
   handoff [text]       out of credits or time: push this branch and leave it for a teammate
-                       (text defaults to the last agent reply; open items go with it)
+                       (text defaults to the last agent reply; open items go with it; the
+                       leases this session holds here are finished)
   pickup [branch|id]   take a handoff: fetch, switch to its branch, print the letter
+                       (either one cut off halfway is finished by running it again)
   claim <glob> [ttl]   lease paths (ttl like 90, 30m, 2h; default 30m); exit 2 if held
   release <id>         give a lease up without finishing (its dirty mark stays)
   ask <path>           who holds this path: held / free, plus half-finished edits
@@ -263,6 +265,11 @@ cmd_done() {
 
 cmd_open() {
   need_root
+  for j in handoff pickup; do
+    [ -f "$ROOT/.sankofa/$j.json" ] || continue
+    w=$(jq -r 'if .rb then .rb else (.b | sub("^[^/]*/"; "")) end' "$ROOT/.sankofa/$j.json" 2>/dev/null || echo ?)
+    printf 'the %s of %s was interrupted; run sankofa %s again to finish it\n' "$j" "$w" "$j"
+  done
   out=$(open_items)
   if [ -z "$out" ]; then echo "no open items"; return 0; fi
   printf '%s\n' "$out" | awk -F'\t' '{ printf "%-5s %-9s %s  %s\n", $1, $2, $3, $4 }'
@@ -283,27 +290,131 @@ no_changes() {
 $ch"
 }
 
+# A handoff or pickup that dies halfway (a killed session, a dropped connection) is finished by
+# running it again: each keeps a journal in .sankofa/ while it runs, and sankofa open reports one
+# left behind. The remote decides who has a handoff: pickup removes the letter and, in the same
+# atomic push, leaves a marker at refs/sankofa/taken/<branch> naming it, so either side can tell
+# afterwards whether a letter it lost track of was taken or never arrived.
+JH=.sankofa/handoff.json
+JP=.sankofa/pickup.json
+jput() { printf '%s\n' "$2" > "$1.tmp" && mv -f "$1.tmp" "$1"; }
+jget() { jq -r --arg k "$2" '.[$k] // ""' "$1"; }
+# rref <remote> <ref>...: the remote's object id for each named ref (one line per ref, empty if
+# it has none); fails when the remote cannot be asked, which is not the same as having none
+rref() {
+  r=$1; shift
+  out=$(git ls-remote "$r" "$@" 2>/dev/null) || return 1
+  for x in "$@"; do printf '%s\n' "$out" | awk -v r="$x" '$2 == r { print $1 }' | head -n1 | grep . || echo; done
+}
+# who took letter <tag> of <rb> from <remote>, by the marker there; empty when it was not taken
+taken_by() {
+  [ -n "$4" ] || return 0
+  git fetch -q --no-tags "$1" "refs/sankofa/taken/$2" 2>/dev/null || return 0
+  [ "$(git rev-parse FETCH_HEAD)" = "$4" ] || return 0
+  [ "$(git cat-file tag FETCH_HEAD | sed -n '1s/^object //p')" = "$3" ] || return 0
+  git cat-file tag FETCH_HEAD | sed -n 's/^tagger \(.*\) <.*/\1/p'
+}
+
+# offer the letter in the journal unless it was taken meanwhile, record it, drop the journal
+finish_handoff() {
+  remote=$(jget "$JH" remote); rb=$(jget "$JH" rb); sha=$(jget "$JH" sha); tag=$(jget "$JH" tag)
+  old=$(jget "$JH" old); text=$(jget "$JH" text)
+  st=$(rref "$remote" "refs/sankofa/handoff/$rb" "refs/sankofa/taken/$rb") ||
+    die "cannot reach $remote to finish the handoff of $rb; run sankofa handoff again when it answers"
+  now=$(printf '%s\n' "$st" | sed -n 1p); mk=$(printf '%s\n' "$st" | sed -n 2p)
+  by=
+  if [ "$now" = "$tag" ]; then :
+  elif by=$(taken_by "$remote" "$rb" "$tag" "$mk") && [ -n "$by" ]; then :
+  elif [ "$now" = "$old" ] || [ -z "$now" ]; then
+    # --force-with-lease: replace only what was there when this handoff began (nothing, or
+    # this branch's previous letter), never a letter someone else wrote meanwhile
+    if ! err=$(git push -q "--force-with-lease=refs/sankofa/handoff/$rb:$now" "$remote" "$tag:refs/sankofa/handoff/$rb" 2>&1); then
+      st=$(rref "$remote" "refs/sankofa/handoff/$rb") || st=
+      if [ "$st" != "$tag" ]; then
+        [ -n "$(cfg hub_repo "")" ] || die "the branch is pushed, but $remote refused refs/sankofa/handoff/$rb: $err"
+        echo "sankofa: $remote refused the handoff ref; the hub ledger carries the handoff" >&2
+      fi
+    fi
+  else
+    rm -f "$JH"; die "$rb was handed off again by someone else meanwhile; this handoff is dropped"
+  fi
+  id=$(jq -r --arg l "$tag" 'select(.type=="handoff" and .letter==$l) | .id' "$LEDGER" | tail -n1)
+  [ -n "$id" ] || id=$(A_BRANCH="$remote/$rb" A_SHA=$sha A_LETTER=$tag append handoff "$text")
+  rm -f "$JH"
+  # this branch's earlier handoffs from here are replaced by this one (a hub ledger keeps them
+  # open otherwise; without a hub the bridge closes them when it sees the letter replaced)
+  me=$(this_device)
+  for o in $(open_items | awk -F'\t' '$2 == "handoff" { print $1 }'); do
+    [ "$o" != "$id" ] || continue
+    jq -e --arg id "$o" --arg b "$remote/$rb" --arg me "$me" --arg old "$old" \
+      'select(.id==$id and .branch==$b and (.letter == $old or (.device // "") == $me or (.device == null and .session != "sankofad")))' \
+      "$LEDGER" >/dev/null 2>&1 && { (cmd_done "$o" "superseded by $id") >/dev/null 2>&1 || :; }
+  done
+  # the work is the teammate's now: the leases this session holds here would only block them
+  # (through a hub, on every device) until they expired
+  dcall "$(jq -nc --arg repo "$ROOT" --arg session "$(session_id)" --arg text "handed off as $id" '{verb:"finish",repo:$repo,session:$session,text:$text}')"
+  [ "$DRC" != 0 ] || { n=$(printf '%s' "$DOUT" | jq '.entries // [] | length'); [ "$n" = 0 ] || echo "sankofa: finished $n lease(s) this session held here" >&2; }
+  if [ -n "$by" ]; then
+    (cmd_done "$id" "picked up by $by") >/dev/null 2>&1 || :
+    printf 'handed off %s at %s; %s has picked it up already  %s\n' "$rb" "$(git rev-parse --short "$sha")" "$by" "$id"
+    return 0
+  fi
+  printf 'handed off %s at %s (pushed to %s)  %s\n' "$rb" "$(git rev-parse --short "$sha")" "$remote" "$id"
+  printf 'on the other machine: sankofa pickup %s\n' "$rb"
+}
+
 cmd_handoff() {
   need_root; git_here handoff
   br=$(git symbolic-ref -q --short HEAD) || die "not on a branch; switch to the branch to hand off"
-  no_changes "commit first; these changes would stay behind on this machine:"
-  un=$(git ls-files -o --exclude-standard -- . "$HX")
-  [ -z "$un" ] || printf 'sankofa: untracked files stay here: %s\n' "$(printf '%s' "$un" | head -n3 | tr '\n' ' ')" >&2
   remote=$(git config "branch.$br.remote" || :); rb=$(git config "branch.$br.merge" || :); rb=${rb#refs/heads/}
   setup=
   if [ -z "$remote" ] || [ "$remote" = . ]; then
-    remote=$(git remote | grep -x origin || git remote | head -n1); rb=$br; setup=-u
+    remote=$(git remote | grep -x origin || :); rb=$br; setup=-u
+    if [ -z "$remote" ]; then
+      [ "$(git remote | grep -c .)" -le 1 ] || die "$br tracks no remote and there are several; push it to the one to hand off through first (git push -u <remote> $br)"
+      remote=$(git remote)
+    fi
     [ -n "$remote" ] || die "no git remote to hand off through (git remote add origin <url>)"
   fi
+  if [ -f "$JH" ]; then
+    if [ "$(jget "$JH" stage)" = letter ]; then
+      jr=$(jget "$JH" rb); js=$(jget "$JH" sha)
+      echo "sankofa: finishing the handoff of $jr that was interrupted" >&2
+      finish_handoff
+      [ "$jr" != "$rb" ] || [ "$js" != "$(git rev-parse HEAD)" ] || return 0
+    elif [ "$(jget "$JH" rb)" != "$rb" ]; then
+      die "the handoff of $(jget "$JH" rb) was interrupted before its letter was written; switch to it and run sankofa handoff again"
+    fi
+  fi
+  no_changes "commit first; these changes would stay behind on this machine:"
+  un=$(git ls-files -o --exclude-standard -- . "$HX")
+  [ -z "$un" ] || printf 'sankofa: untracked files stay here: %s\n' "$(printf '%s' "$un" | head -n3 | tr '\n' ' ')" >&2
+  sha=$(git rev-parse HEAD)
+  jput "$JH" "$(jq -nc --arg remote "$remote" --arg rb "$rb" --arg sha "$sha" '{stage:"branch",remote:$remote,rb:$rb,sha:$sha}')"
   # the teammate gets the remote branch: it must not have commits this one lacks
   if git fetch -q "$remote" "refs/heads/$rb" 2>/dev/null && ! git merge-base --is-ancestor FETCH_HEAD HEAD; then
-    die "$remote/$rb has commits this branch does not; pull them first"
+    rm -f "$JH"; die "$remote/$rb has commits this branch does not; pull them first"
   fi
-  git push -q $setup "$remote" "HEAD:refs/heads/$rb" || die "git push to $remote failed"
-  sha=$(git rev-parse HEAD)
+  old=$(rref "$remote" "refs/sankofa/handoff/$rb") || { rm -f "$JH"; die "cannot reach $remote"; }
+  # the same handoff again (run twice, or again after a crash that came after it was finished)
+  # changes nothing: same commit, same letter text, still on offer
+  # (through a hub whose remote refuses the letter, the ledger alone says it is on offer)
+  last=$(git rev-parse -q --verify "refs/sankofa/handoff/$rb" || :)
+  if [ -n "$last" ] && [ "$(git rev-parse "$last^{commit}")" = "$sha" ] &&
+     { [ "$old" = "$last" ] || { [ -z "$old" ] && [ -n "$(cfg hub_repo "")" ] && open_items | cut -f1 | grep -qxF \
+         "$(jq -r --arg l "$last" 'select(.type=="handoff" and .letter==$l) | .id' "$LEDGER" | tail -n1)"; }; }; then
+    prev=$(jq -r --arg l "$last" 'select(.type=="handoff" and .letter==$l) | "\(.id)\t\(.text)"' "$LEDGER" | tail -n1)
+    if [ -n "$prev" ] && { [ -z "$*" ] || [ "${prev#*"$TAB"}" = "$*" ]; }; then
+      rm -f "$JH"
+      printf 'already handed off %s at %s  %s\n' "$rb" "$(git rev-parse --short "$sha")" "${prev%%"$TAB"*}"
+      printf 'on the other machine: sankofa pickup %s\n' "$rb"
+      return 0
+    fi
+  fi
+  git push -q $setup "$remote" "HEAD:refs/heads/$rb" || die "git push to $remote failed; run sankofa handoff again"
   text=$*
   [ -n "$text" ] || text=$(jq -rs 'map(select(.type=="stop" and .text != "")) | last | .text // empty' "$LEDGER")
-  [ -n "$text" ] || die "handoff needs text: what is done, what is next"
+  [ -n "$text" ] || { rm -f "$JH"; die "handoff needs text: what is done, what is next"; }
   items=$(open_items | awk -F'\t' '$2 != "handoff" { printf "- %s %s: %s\n", $1, $2, $4 }')
   msg=$text; [ -z "$items" ] || msg="$text
 
@@ -311,22 +422,24 @@ Open items:
 $items"
   tag=$(printf 'object %s\ntype commit\ntag handoff/%s\ntagger %s\n\n%s\n' "$sha" "$rb" "$(git var GIT_COMMITTER_IDENT)" "$msg" |
         git hash-object -t tag -w --stdin) || die "could not write the handoff letter"
+  # this machine's own letters are known by this ref, whatever the ledger says
   git update-ref "refs/sankofa/handoff/$rb" "$tag"
-  if ! git push -q --force "$remote" "refs/sankofa/handoff/$rb:refs/sankofa/handoff/$rb" 2>/dev/null; then
-    [ -n "$(cfg hub_repo "")" ] || die "the branch is pushed, but $remote refused refs/sankofa/handoff/$rb"
-    echo "sankofa: $remote refused the handoff ref; the hub ledger carries the handoff" >&2
-  fi
-  id=$(A_BRANCH="$remote/$rb" A_SHA=$sha A_LETTER=$tag append handoff "$text")
-  printf 'handed off %s at %s (pushed to %s)  %s\n' "$rb" "$(git rev-parse --short HEAD)" "$remote" "$id"
-  printf 'on the other machine: sankofa pickup %s\n' "$rb"
+  jput "$JH" "$(jq -nc --arg remote "$remote" --arg rb "$rb" --arg sha "$sha" --arg tag "$tag" --arg old "$old" --arg text "$text" \
+    '{stage:"letter",remote:$remote,rb:$rb,sha:$sha,tag:$tag,old:$old,text:$text}')"
+  finish_handoff
 }
 
 # handoffs on offer, one per line: remote/branch TAB sha TAB ledger id (or -); never this machine's own
 handoffs() {
   me=$(this_device)
-  # this machine's own handoffs, by letter (the same commit may come back in someone else's letter)
-  mine=$(jq -r --arg me "$me" 'select(.type=="handoff" and ((.device // "") == $me or (.device == null and .session != "sankofad"))) | .letter // .sha' "$LEDGER" | sort -u)
+  # this machine's own handoffs, by letter (the same commit may come back in someone else's letter):
+  # the ones in the ledger and the ones git knows it wrote, which a crash may have kept from the ledger
+  mine=$( { jq -r --arg me "$me" 'select(.type=="handoff" and ((.device // "") == $me or (.device == null and .session != "sankofad"))) | .letter // .sha' "$LEDGER"
+            git for-each-ref --format='%(objectname)' refs/sankofa/handoff; } | sort -u)
   hub=0; [ -n "$(cfg hub_repo "")" ] && hub=1
+  # letters a shared ledger says were picked up (the remote's copy may be one a crash left behind)
+  gone=$(jq -rs '([.[] | select(.type=="done") | .ref]) as $d | .[] | select(.type=="handoff" and .letter != null and IN(.id; $d[])) | .letter' "$LEDGER")
+  [ "$hub" = 1 ] || gone=
   # each line: branch, sha, ledger id or -, g (git has the letter) or l (only the ledger), letter
   { for hid in $(open_items | awk -F'\t' '$2 == "handoff" { print $1 }'); do
       jq -r --arg id "$hid" 'select(.id==$id) | "\(.branch)\t\(.sha)\t\(.id)\tl\t\(.letter // .sha)"' "$LEDGER"
@@ -334,9 +447,11 @@ handoffs() {
     git for-each-ref --format='%(refname:strip=3)%09%(objectname)' refs/sankofa/remote | while IFS="$TAB" read -r b t; do
       printf '%s\t%s\t-\tg\t%s\n' "$b" "$(git rev-parse "$t^{commit}")" "$t"
     done
-  } | awk -F'\t' -v mine="$mine" -v hub="$hub" '
-      BEGIN { n = split(mine, m, "\n"); for (i = 1; i <= n; i++) skip[m[i]] = 1 }
+  } | awk -F'\t' -v mine="$mine" -v gone="$gone" -v hub="$hub" '
+      BEGIN { n = split(mine, m, "\n"); for (i = 1; i <= n; i++) skip[m[i]] = 1
+              n = split(gone, m, "\n"); for (i = 1; i <= n; i++) taken[m[i]] = 1 }
       $5 in skip || $2 in skip { next }
+      $4 == "g" && $5 in taken { next }
       { k = $1 FS $2; if (!(k in seen)) { seen[k] = 1; order[++c] = k }; if ($3 != "-") id[k] = $3; if ($4 == "g") git[k] = 1 }
       # without a hub the letter on the remote is the offer: a ledger copy without one was taken already
       END { for (i = 1; i <= c; i++) if (hub || (order[i] in git)) print order[i] FS (order[i] in id ? id[order[i]] : "-") }'
@@ -346,7 +461,57 @@ handoffs() {
 switch_failed() {
   [ -z "$tag" ] || git push -q "$remote" "$tag:refs/sankofa/handoff/$rb" 2>/dev/null || :
   [ "$hid" = - ] || A_BRANCH=$b A_SHA=$sha A_LETTER=$tag append handoff "$letter" >/dev/null || :
+  rm -f "$JP"
   die "could not switch to $rb, so the handoff is offered again: $1"
+}
+
+# load the pickup journal into b sha tip hid tag mark who letter remote rb
+pickup_vars() {
+  b=$(jget "$JP" b); sha=$(jget "$JP" sha); tip=$(jget "$JP" tip); hid=$(jget "$JP" hid); tag=$(jget "$JP" tag)
+  mark=$(jget "$JP" mark); who=$(jget "$JP" who); letter=$(jget "$JP" letter); remote=${b%%/*}; rb=${b#*/}
+}
+
+# the claim: take the handoff in the journal, or find out that someone else did. Returns 0 when it is ours.
+claim_handoff() {
+  hub=; [ -n "$(cfg hub_repo "")" ] && hub=1
+  mine="picked up on $(this_device) at $(git rev-parse --short "$sha")"
+  if [ -n "$tag" ]; then
+    # one atomic push removes the letter (only if it is still the one we saw) and leaves the marker
+    if ! perr=$(git push -q --atomic "--force-with-lease=refs/sankofa/handoff/$rb:$tag" "$remote" \
+         ":refs/sankofa/handoff/$rb" "+$mark:refs/sankofa/taken/$rb" 2>&1); then
+      st=$(rref "$remote" "refs/sankofa/handoff/$rb" "refs/sankofa/taken/$rb") ||
+        die "cannot reach $remote; run sankofa pickup again to finish taking $rb"
+      now=$(printf '%s\n' "$st" | sed -n 1p); mk=$(printf '%s\n' "$st" | sed -n 2p)
+      if [ "$mk" != "$mark" ]; then
+        if [ "$now" = "$tag" ]; then
+          # the letter is there and still ours to take. A server that cannot take both refs at once,
+          # or will not keep the marker, says so: then removing the letter alone is still a claim.
+          # Anything else (the connection) is for running pickup again; the journal says where it got to
+          case $perr in *atomic*|*"refs/sankofa/taken/$rb ("*) ;; *) die "could not take $rb from $remote: ${perr:-push failed}; run sankofa pickup again" ;; esac
+          git push -q "--force-with-lease=refs/sankofa/handoff/$rb:$tag" "$remote" ":refs/sankofa/handoff/$rb" 2>/dev/null ||
+            { [ -n "$hub" ] || { rm -f "$JP"; die "$remote refused removing refs/sankofa/handoff/$rb, so the handoff cannot be taken"; }; }
+        else
+          rm -f "$JP"; git update-ref -d "refs/sankofa/remote/$b" 2>/dev/null || :
+          [ -z "$now" ] && die "someone else picked up $rb first"
+          die "$rb was handed off again meanwhile; run sankofa pickup again"
+        fi
+      fi
+    fi
+    git update-ref -d "refs/sankofa/remote/$b" 2>/dev/null || :
+  fi
+  if [ -z "$tag" ] && [ "$hid" != - ]; then
+    # only the ledger offers it: if the remote has its letter's marker, someone took it through
+    # git and their done has not reached this ledger yet
+    l=$(jq -r --arg id "$hid" 'select(.id==$id) | .letter // empty' "$LEDGER" | tail -n1)
+    if [ -n "$l" ] && mk=$(rref "$remote" "refs/sankofa/taken/$rb") && by=$(taken_by "$remote" "$rb" "$l" "$mk") && [ -n "$by" ]; then
+      rm -f "$JP"; die "$by picked up $rb first"
+    fi
+  fi
+  if [ "$hid" != - ] && ! (cmd_done "$hid" "$mine") 2>/dev/null; then
+    # already done: by this pickup before it was interrupted, or (through a hub) by someone else
+    d=$(jq -rs --arg id "$hid" 'map(select(.type=="done" and .ref==$id)) | first | .text // ""' "$LEDGER")
+    if [ -n "$hub" ] && [ -z "$tag" ] && [ "$d" != "$mine" ]; then rm -f "$JP"; die "someone else picked up $rb first"; fi
+  fi
 }
 
 cmd_pickup() {
@@ -356,65 +521,80 @@ cmd_pickup() {
     git fetch -q --prune --no-tags "$r" "+refs/heads/*:refs/remotes/$r/*" "+refs/sankofa/handoff/*:refs/sankofa/remote/$r/*" ||
       echo "sankofa: could not fetch $r" >&2
   done
-  list=$(handoffs)
-  if [ $# -gt 0 ]; then
-    list=$(printf '%s\n' "$list" | awk -F'\t' -v a="$1" '$3 == a || $1 == a || substr($1, index($1, "/") + 1) == a')
-  fi
-  n=$(printf '%s' "$list" | grep -c . || :)
-  if [ "$n" -eq 0 ]; then echo "nothing handed off${1:+ as $1}"; [ $# -eq 0 ]; return; fi
-  if [ "$n" -gt 1 ]; then
-    echo "more than one handoff; name one: sankofa pickup <branch>" >&2
-    printf '%s\n' "$list" | awk -F'\t' '{ printf "  %s  at %s  %s\n", $1, substr($2, 1, 7), $3 }' >&2
-    exit 1
-  fi
-  b=$(printf '%s' "$list" | cut -f1); sha=$(printf '%s' "$list" | cut -f2); hid=$(printf '%s' "$list" | cut -f3)
-  remote=${b%%/*}; rb=${b#*/}
-  git cat-file -e "$sha^{commit}" 2>/dev/null || die "commit $sha of $b is not here; did git fetch $remote fail?"
-  tag=$(git rev-parse -q --verify "refs/sankofa/remote/$b" || :)
-  if [ -n "$tag" ] && [ "$(git rev-parse "$tag^{commit}")" = "$sha" ]; then
-    letter=$(git cat-file tag "$tag" | sed '1,/^$/d')
-    who=$(git cat-file tag "$tag" | sed -n 's/^tagger \(.*\) <.*/\1/p')
+  if [ -f "$JP" ]; then
+    pickup_vars
+    echo "sankofa: finishing the pickup of $rb that was interrupted" >&2
+    [ "$(jget "$JP" stage)" = claimed ] || { claim_handoff; jput "$JP" "$(jq -c '.stage = "claimed"' "$JP")"; }
   else
-    tag=; letter=$(jq -r --arg id "$hid" 'select(.id==$id) | .text' "$LEDGER")
-    who=$(jq -r --arg id "$hid" 'select(.id==$id) | .device // .session' "$LEDGER")
+    list=$(handoffs)
+    if [ $# -gt 0 ]; then
+      list=$(printf '%s\n' "$list" | awk -F'\t' -v a="$1" '$3 == a || $1 == a || substr($1, index($1, "/") + 1) == a')
+    fi
+    n=$(printf '%s' "$list" | grep -c . || :)
+    if [ "$n" -eq 0 ]; then echo "nothing handed off${1:+ as $1}"; [ $# -eq 0 ]; return; fi
+    if [ "$n" -gt 1 ]; then
+      echo "more than one handoff; name one: sankofa pickup <branch>" >&2
+      printf '%s\n' "$list" | awk -F'\t' '{ printf "  %s  at %s  %s\n", $1, substr($2, 1, 7), $3 }' >&2
+      exit 1
+    fi
+    b=$(printf '%s' "$list" | cut -f1); sha=$(printf '%s' "$list" | cut -f2); hid=$(printf '%s' "$list" | cut -f3)
+    remote=${b%%/*}; rb=${b#*/}
+    git cat-file -e "$sha^{commit}" 2>/dev/null || die "commit $sha of $b is not here; did git fetch $remote fail?"
+    tag=$(git rev-parse -q --verify "refs/sankofa/remote/$b" || :)
+    if [ -n "$tag" ] && [ "$(git rev-parse "$tag^{commit}")" = "$sha" ]; then
+      letter=$(git cat-file tag "$tag" | sed '1,/^$/d')
+      who=$(git cat-file tag "$tag" | sed -n 's/^tagger \(.*\) <.*/\1/p')
+    else
+      tag=; letter=$(jq -r --arg id "$hid" 'select(.id==$id) | .text' "$LEDGER")
+      who=$(jq -r --arg id "$hid" 'select(.id==$id) | .device // .session' "$LEDGER")
+    fi
+    tip=$sha
+    if git rev-parse -q --verify "refs/remotes/$b" >/dev/null && git merge-base --is-ancestor "$sha" "refs/remotes/$b"; then tip=refs/remotes/$b; fi
+    tip=$(git rev-parse "$tip")
   fi
-  tip=$sha
-  if git rev-parse -q --verify "refs/remotes/$b" >/dev/null && git merge-base --is-ancestor "$sha" "refs/remotes/$b"; then tip=refs/remotes/$b; fi
   # everything that could refuse the switch is checked before the handoff is taken
   if git show-ref -q --verify "refs/heads/$rb"; then
     git merge-base --is-ancestor "refs/heads/$rb" "$tip" || die "your $rb has commits of its own; merge $b by hand"
   fi
   in_way=$({ git ls-tree -r --name-only "$tip"; git ls-files -o --exclude-standard; } | sort | uniq -d | head -n3 | tr '\n' ' ')
   [ -z "$in_way" ] || die "untracked files here are in $rb too; move them first: $in_way"
-  hub=; [ -n "$(cfg hub_repo "")" ] && hub=1
-  # take it first, so two people picking up at once cannot both have it: removing the letter from
-  # the remote is the claim (only one removal of that letter succeeds); through a hub the done is
-  if [ -n "$tag" ]; then
-    if ! git push -q "--force-with-lease=refs/sankofa/handoff/$rb:$tag" "$remote" ":refs/sankofa/handoff/$rb" 2>/dev/null; then
-      now=$(git ls-remote "$remote" "refs/sankofa/handoff/$rb" 2>/dev/null | cut -f1)
-      if [ "$now" != "$tag" ]; then
-        git update-ref -d "refs/sankofa/remote/$b" 2>/dev/null || :
-        [ -z "$now" ] && die "someone else picked up $rb first"
-        die "$rb was handed off again meanwhile; run sankofa pickup again"
-      fi
-      [ -n "$hub" ] || die "$remote refused removing refs/sankofa/handoff/$rb, so the handoff cannot be taken"
-    fi
-    git update-ref -d "refs/sankofa/remote/$b" 2>/dev/null || :
+  if [ ! -f "$JP" ]; then
+    mark=
+    [ -z "$tag" ] || mark=$(printf 'object %s\ntype tag\ntag taken/%s\ntagger %s\n\npicked up on %s\n' "$tag" "$rb" \
+                            "$(git var GIT_COMMITTER_IDENT)" "$(this_device)" | git hash-object -t tag -w --stdin)
+    jput "$JP" "$(jq -nc --arg b "$b" --arg sha "$sha" --arg tip "$tip" --arg hid "$hid" --arg tag "$tag" --arg mark "$mark" \
+      --arg who "$who" --arg letter "$letter" '{stage:"claiming",b:$b,sha:$sha,tip:$tip,hid:$hid,tag:$tag,mark:$mark,who:$who,letter:$letter}')"
+    # take it first, so two people picking up at once cannot both have it
+    claim_handoff
+    jput "$JP" "$(jq -c '.stage = "claimed"' "$JP")"
   fi
-  if [ "$hid" != - ] && ! (cmd_done "$hid" "picked up on $(this_device) at $(git rev-parse --short "$tip")") 2>/dev/null; then
-    if [ -n "$hub" ]; then die "someone else picked up $rb first"; fi
-  fi
-  if git show-ref -q --verify "refs/heads/$rb"; then
+  if [ "$(git symbolic-ref -q --short HEAD || :)" = "$rb" ] && [ "$(git rev-parse HEAD)" = "$tip" ]; then :
+  elif git show-ref -q --verify "refs/heads/$rb"; then
     # one step, so a refusal leaves you where you were: $rb only moves forward (checked above)
     err=$(git switch -q -C "$rb" "$tip" 2>&1) || switch_failed "$err"
-  elif [ "$tip" != "$sha" ]; then err=$(git switch -q -c "$rb" --track "$b" 2>&1) || switch_failed "$err"
-  else err=$(git switch -q -c "$rb" "$sha" 2>&1) || switch_failed "$err"; fi
+  elif git rev-parse -q --verify "refs/remotes/$b" >/dev/null && [ "$(git rev-parse "refs/remotes/$b")" = "$tip" ]; then
+    err=$(git switch -q -c "$rb" --track "$b" 2>&1) || switch_failed "$err"
+  else err=$(git switch -q -c "$rb" "$tip" 2>&1) || switch_failed "$err"; fi
   short=$(git rev-parse --short HEAD)
-  [ "$hid" != - ] || append note "picked up $rb at $short from $who: $letter" >/dev/null
-  # without a hub the open items exist only in the letter: carry them over as todos here
+  if [ "$hid" = - ]; then
+    t="picked up $rb at $short from $who: $letter"
+    jq -e --arg t "$t" 'select(.type=="note" and .text==$t)' "$LEDGER" >/dev/null 2>&1 || append note "$t" >/dev/null
+  fi
+  # without a hub the open items exist only in the letter: carry them over as todos here, but not
+  # one already open here (an interrupted pickup finished, or the same item in an earlier letter)
   if [ -z "$(cfg hub_repo "")" ]; then
     printf '%s\n' "$letter" | sed -n '/^Open items:$/,$ s/^- \([^ ]*\) [a-z]*: \(.*\)/\2 (from '"$who"', was \1)/p' |
-      while IFS= read -r t; do append todo "$t" >/dev/null; done
+      while IFS= read -r t; do
+        open_items | awk -F'\t' '$2 == "todo" { print $4 }' | grep -qxF -- "$t" || append todo "$t" >/dev/null
+      done
+  fi
+  rm -f "$JP"
+  # what became of the branch after the handoff: the letter still holds the commit either way
+  if ! git rev-parse -q --verify "refs/remotes/$b" >/dev/null; then
+    printf 'sankofa: %s is no longer on %s; you have the handed-off commit\n' "$b" "$remote" >&2
+  elif ! git merge-base --is-ancestor "$sha" "refs/remotes/$b"; then
+    printf 'sankofa: %s was rewritten after the handoff; you are at the handed-off commit, %s is at %s\n' \
+      "$b" "$b" "$(git rev-parse --short "refs/remotes/$b")" >&2
   fi
   printf 'picked up %s from %s, now at %s\n\n%s\n' "$rb" "$who" "$short" "$letter"
 }

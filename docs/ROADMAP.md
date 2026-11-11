@@ -281,6 +281,77 @@ six seconds while its panel's border flashes; a live line counts repos and
 events and ages the last one. The sankofa bird, drawn in half blocks from the
 Adinkra silhouette, fades in from dark to gold at start and sits in About.
 
+## 0.11 · the scenarios nobody had run
+
+Deliver: run what the earlier simulations left out, and fix what it finds.
+Handoff and pickup killed partway; handoffs through a hub, races included;
+the sender's leases after a handoff; branches rewritten or deleted after one,
+remotes not called origin, names with slashes; an upgrade over an old
+database, and teams that have not all upgraded; the terminal dashboard under
+a year of ledger, bursts, small and odd terminals; clocks that disagree.
+
+Tests: `tests/0.11` (the two worst crash points, leases, git states),
+`ALongLedgerFoldsInLinearTime`; simulations `sim/crash.py`,
+`sim/handoff.py --hub`, `sim/compat.py`.
+
+Outcome (0.11.0, 2026-11-11):
+
+- Crashes (`sim/crash.py`: the command's process group killed before and
+  after each of its git and sankofad calls, then run again, with and without
+  a hub, and with a hub and a remote that refuses `refs/sankofa/*`). Against
+  0.10.2 a pickup killed just after its claim lost the handoff: the letter was
+  gone from the remote, nobody was on the branch, and nothing said so. Now
+  handoff and pickup keep a journal in `.sankofa/` while they run; running the
+  command again finishes it, and `sankofa open` reports one left behind. Pickup
+  removes the letter and leaves a marker (`refs/sankofa/taken/<branch>`, a tag
+  naming the letter, tagged by the taker) in one atomic push, so after a crash
+  either side can tell whether a letter it lost track of was taken or never
+  arrived. A finished handoff run again changes nothing (it used to write a
+  second letter). The sender's bridge knows its own letters by
+  `refs/sankofa/handoff/<branch>` in its own repo, so a letter whose ledger
+  event a crash prevented is never offered back to its sender. Network
+  failures too: each push, fetch and ls-remote failed before reaching the
+  remote, and after the remote acted but before the answer came back. That
+  found one more: a claim push lost on the way was taken for a server without
+  atomic pushes, and the claim fell back to one without its marker; it now
+  falls back only when the server says so (no atomic push, or the marker ref
+  refused), and otherwise asks for pickup to be run again. Final run: 396
+  cases across the three modes and 45 races, none failing.
+- Through a hub (`sim/crash.py`, `sim/handoff.py --hub`): a pickup through
+  git could be taken again from the hub's copy before its done arrived (two
+  people on the branch); a ledger-only pickup now checks the remote's marker
+  first. A handoff run again on a branch already on offer through a hub kept
+  both open; a new handoff now finishes the sender's earlier ones for that
+  branch. Then 10 seeds x 300 steps through a hub: 239 handoffs, 66 rehands,
+  185 pickups, 33 races (none won twice), no commit lost, open handoffs right
+  on every device, 915 toasts, none on the sender and none missed; and 15
+  simultaneous pickups per mode, each won by exactly one.
+- Leases: a handoff finishes the leases its session holds in the repo, so a
+  teammate picking up through a hub is not blocked until they expire.
+- Git states: a branch rewritten after the handoff, or deleted from the
+  remote, still picks up at the handed-off commit and says what became of the
+  branch; with several remotes, none called origin, and a branch tracking
+  none, handoff refuses instead of pushing to the first in alphabetical order.
+  Todos carried from a letter skip ones already open (the same item in an
+  earlier letter, or a pickup finished after a crash): the git-only run now
+  carries 1335, all expected.
+- Versions (`sim/compat.py`, old releases built from their tags): a v0.8.1
+  database and ledger open in 0.11 with the todo open and the lease listed;
+  v0.10.2 and 0.11 hand off to each other both ways; 0.11 devices on a
+  v0.10.2 hub, and a v0.10.2 device on a 0.11 hub, sending and picking up.
+- The terminal dashboard: every lease done looked at every lease the repo
+  ever had, so a 200,000-event ledger took 25 s to open (50,000: 0.75 s); now
+  0.66 s. A burst of 20,000 events kept it at 90% CPU and never on screen,
+  since each list was cleared and refilled row by row; lists are now replaced
+  in one step, and the burst shows within half a second. Resolved items and
+  finished leases are dropped from the fold, and the record of rows seen is
+  pruned: a 90 s soak at 400 events/s held at 42 to 48 MB and 8% CPU. 40x12,
+  20x6, resizing, `NO_COLOR`, `TERM=dumb` and `vt100`, a truncated, replaced or
+  deleted ledger and garbage lines all render and keep running.
+- Clocks: lease expiry with a clock 90 s ahead was already simulated
+  (`sim/hub.py --docker --skew`); the dashboard shows a timestamp from the
+  future as "now".
+
 ## Later / maybe
 
 - Test runner subscriber (run on `done`, write `tests` event).

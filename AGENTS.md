@@ -11,6 +11,8 @@ never edit the ledger by hand.
 - If `sankofa open` lists a `handoff`, or the human says work was handed to
   them: `sankofa pickup [id]` switches to the branch and prints the letter;
   continue from it. To hand work on: commit, then `sankofa handoff "<text>"`.
+  If `sankofa open` says a handoff or pickup was interrupted, run that same
+  command again: it finishes what was cut off.
 - Every file you edit is leased to you automatically by the edit gate. If an
   edit is denied because another session or subagent holds the file, do not
   work around it (no Bash rewrites of that file): work on something else, wait,

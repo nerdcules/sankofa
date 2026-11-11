@@ -194,7 +194,7 @@ public sealed partial class Store
 
     /// <summary>Finish the open handoffs whose ref is gone from a remote that just answered a fetch
     /// (someone picked them up), or now names another commit (handed off again, and recorded anew).</summary>
-    public List<Entry> HandoffsTaken(string repo, ISet<string> fetched, Func<Entry, string?> refNow)
+    public List<Entry> HandoffsTaken(string repo, ISet<string> fetched, Func<Entry, string?> refNow, Func<Entry, string?>? takenBy = null)
     {
         List<Entry> open;
         lock (gate) open = Open(repo).Where(e => e.Type == "handoff").ToList();
@@ -205,7 +205,9 @@ public sealed partial class Store
             if (remote is null || !fetched.Contains(remote)) continue;
             var at = refNow(h);
             if (at == (h.Letter ?? h.Sha)) continue;
-            done.Add(Done(repo, h.Id, at is null ? $"picked up: the handoff of {h.Branch} is gone from {remote}"
+            var by = at is null ? takenBy?.Invoke(h) : null;
+            done.Add(Done(repo, h.Id, by is not null ? $"picked up by {by}: the handoff of {h.Branch} is gone from {remote}"
+                                    : at is null ? $"picked up: the handoff of {h.Branch} is gone from {remote}"
                                                    : $"superseded: {h.Branch} was handed off again",
                           "sankofad", "sankofad"));
         }
