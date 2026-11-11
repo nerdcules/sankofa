@@ -121,6 +121,9 @@ public sealed class HubLink : IDisposable
 
     public bool Online => DateTimeOffset.UtcNow >= offlineUntil;
 
+    /// <summary>This device's name on the hub (hub.conf), or null without a hub.</summary>
+    public string? DeviceName => Config()?.Device;
+
     public void Start()
     {
         foreach (var r in store.Replicas()) Get(r.Repo);

@@ -97,7 +97,10 @@ carries a nonce, so a write whose answer was lost in a crash is never repeated.
 Leases are claim events with an expiry (default 30 minutes) and a dirty mark.
 `done` ends a lease and clears the mark. `release` ends it and keeps the mark.
 An expired lease keeps it too, so the next claimant hears that the edit may be
-half-finished. Two holders conflict when their globs can match a common path;
+half-finished, until git shows otherwise: about once a minute sankofad finishes
+every ended lease still marked whose paths have no uncommitted change in any
+worktree of the repo (`sankofa leases settle` does it now). Files git ignores
+count as clean; outside git the mark stays. Two holders conflict when their globs can match a common path;
 a session and its subagent are different holders. `sankofa events --follow`
 streams every event as it happens, which is how later parts will subscribe.
 

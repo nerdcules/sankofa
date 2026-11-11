@@ -2,7 +2,7 @@
 # Build:   cd packaging/arch && makepkg -si
 # Local:   SANKOFA_SRC="git+file://$PWD/../..#branch=main" makepkg -si   (unreleased tree)
 pkgname=sankofa
-pkgver=0.8.0
+pkgver=0.8.1
 pkgrel=1
 pkgdesc="Handoff ledger and path leases for many AI coding sessions on one codebase"
 arch=('x86_64')
