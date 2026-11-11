@@ -18,6 +18,10 @@ never edit the ledger by hand.
   ends; an abandoned lease expires, and the next holder is told the edit may be
   half-finished.
 - A commit that touches a path someone else holds is refused by the git gate.
+- In a git worktree, nobody's lease covers the other worktrees. If `sankofa last`
+  shows an `overlap` event for a path you changed, another tree changed it too:
+  tell the human before merging. A `landed` event is work pushed to a remote
+  by someone else (often a scheduled agent); read it before redoing that work.
 - Without a shell, the same verbs are MCP tools on the `sankofa` server
   (`sankofad mcp`): `open`, `last`, `note`, `todo`, `awaiting`, `done`,
   `claim`, `release`, `ask`, `leases`.

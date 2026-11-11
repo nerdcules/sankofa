@@ -17,6 +17,12 @@ public sealed class Server
     readonly string socketPath;
     readonly ConcurrentDictionary<Channel<Entry>, string?> followers = new();
 
+    /// <summary>The overlap watcher and the remote bridge, when this server runs them (sankofad serve).</summary>
+    public Overlaps? Overlaps { get; set; }
+    public Bridge? Bridge { get; set; }
+    Overlaps? passive;
+    Overlaps Trees => Overlaps ?? (passive ??= new Overlaps(store, useInotify: false));
+
     public Server(Store store, string socketPath)
     {
         this.store = store;
@@ -133,6 +139,17 @@ public sealed class Server
         finally { followers.TryRemove(ch, out _); }
     }
 
+    /// <summary>The top of the working tree a path is in.</summary>
+    static string TopLevel(string path)
+    {
+        if (!Directory.Exists(path)) throw new SankofaException($"no such directory: {path}");
+        var t = Git.Run(path, "rev-parse", "--show-toplevel");
+        return t.Ok ? t.Out.Trim() : throw new SankofaException($"{path} is not in a git working tree");
+    }
+
+    static string TopLevelOrSelf(string path) =>
+        Directory.Exists(path) && Git.Run(path, "rev-parse", "--show-toplevel") is { Ok: true } t ? t.Out.Trim() : path;
+
     public Response Dispatch(Request r)
     {
         try
@@ -198,6 +215,53 @@ public sealed class Server
                 case "sync":
                     store.Sync(Repo());
                     return new Response();
+                case "trees":
+                    return new Response { Trees = Trees.Status(Repo()) };
+                case "trees-add":
+                {
+                    var home = Repo();
+                    if (r.Paths is not { Count: > 0 }) store.TreeAdd(home, Store.AutoTrees);
+                    else foreach (var p in r.Paths) store.TreeAdd(home, TopLevel(p));
+                    Overlaps?.Refresh();
+                    return new Response { Trees = Trees.Status(home) };
+                }
+                case "trees-rm":
+                {
+                    var home = Repo();
+                    int n = 0;
+                    if (r.Paths is not { Count: > 0 }) n = store.TreeRemove(home, null);
+                    else foreach (var p in r.Paths) n += store.TreeRemove(home, p == Store.AutoTrees ? p : TopLevelOrSelf(p));
+                    if (n == 0) throw new SankofaException("no such tree registered");
+                    Overlaps?.Refresh();
+                    return new Response();
+                }
+                case "rescan":
+                    return new Response { Entries = Trees.Scan(Repo()) };
+                case "bridge":
+                {
+                    var repo = Repo();
+                    if (r.On == false)
+                    {
+                        if (!store.BridgeOff(repo)) throw new SankofaException("the bridge is not on for this repo");
+                        return new Response { State = "off" };
+                    }
+                    if (r.On == true)
+                    {
+                        if (!Git.Run(repo, "rev-parse", "--git-dir").Ok) throw new SankofaException($"{repo} is not a git repository");
+                        store.BridgeOn(repo, r.Interval);
+                        (Bridge ?? new Bridge(store)).Poll(repo);   // the baseline, so the first real fetch can report
+                    }
+                    var b = store.Bridge(repo);
+                    return new Response { State = b is null ? "off" : "on", Bridge = b };
+                }
+                case "fetch":
+                {
+                    var repo = Repo();
+                    if (store.Bridge(repo) is null) throw new SankofaException("the bridge is not on for this repo (sankofa bridge on)");
+                    var landed = (Bridge ?? new Bridge(store)).Poll(repo)
+                                 ?? throw new SankofaException("a fetch of this repo is already running");
+                    return new Response { Entries = landed, Bridge = store.Bridge(repo) };
+                }
                 default:
                     return Response.Fail($"unknown verb '{r.Verb}'");
             }

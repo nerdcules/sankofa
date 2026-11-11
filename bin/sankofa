@@ -6,7 +6,7 @@
 # POSIX sh + jq.
 set -eu
 
-VERSION=0.5.0
+VERSION=0.6.0
 
 usage() {
   cat <<'USAGE'
@@ -31,7 +31,16 @@ usage: sankofa <command> [args]
   hook subagent-stop   SubagentStop hook: records the report, finishes the subagent's leases
   hook session-end     SessionEnd hook: finishes every lease the session holds
   gate install [dir]   install the git pre-commit gate in a repo (uninstall, status)
-  watch add [dir]      toast this repo's awaiting items on the desktop (sankofa-watch)
+  trees on             watch this repo and all its git worktrees for overlaps
+  trees add <dir>...   also watch another checkout (a clone, or a worktree elsewhere)
+  trees [list]         the watched trees, their branches and how many paths each changed
+  trees scan           look for overlaps now (prints any recorded)
+  trees rm <dir>|off   stop watching one tree, or all of them
+  bridge on [interval] fetch the remotes every interval (default 5m); record a landed
+                       event for each remote branch that moved and is not your own push
+  bridge fetch         fetch now (prints any landed events)
+  bridge [status]|off
+  watch add [dir]      toast this repo's awaiting, overlap and landed events (sankofa-watch)
   watch list           show watched repos
   watch rm [dir]       stop watching a repo
   version
@@ -428,6 +437,74 @@ cmd_gate() {
 
 watch_reg() { printf '%s' "${XDG_CONFIG_HOME:-$HOME/.config}/sankofa/watched"; }
 
+# daemon-only verbs (trees, bridge): die with a clear message when it is down
+dneed() {
+  dcall "$1"
+  case $DRC in 0) ;; 3) die "sankofad unreachable at $(sock_path); trees and the bridge run in the daemon" ;; *) die "$(derr)" ;; esac
+}
+abs_dir() { [ -d "$1" ] || die "no such directory: $1"; (cd -P "$1" && pwd -P); }
+# offer the desktop toasts the first time a repo starts producing overlap or landed events
+watch_hint() {
+  REG=$(watch_reg)
+  [ -f "$REG" ] && grep -qxF "$ROOT" "$REG" && return 0
+  echo "sankofa: to see these on the desktop: sankofa watch add $ROOT"
+}
+
+print_trees() {
+  printf '%s' "$DOUT" | jq -r '.trees[]? | [.kind, .branch, (.touched|tostring), .path] | @tsv' \
+    | awk -F'\t' '{ printf "%-9s %-24s %4s changed  %s\n", $1, $2, $3, $4 }'
+}
+
+cmd_trees() {
+  need_root
+  sub=${1:-list}; [ $# -gt 0 ] && shift
+  case $sub in
+    list) dneed "$(jq -nc --arg repo "$ROOT" '{verb:"trees",repo:$repo}')"; print_trees ;;
+    on)   dneed "$(jq -nc --arg repo "$ROOT" '{verb:"trees-add",repo:$repo}')"; print_trees; watch_hint ;;
+    add)
+      [ $# -ge 1 ] || die "trees add <dir>..."
+      paths=$(for d in "$@"; do abs_dir "$d"; echo; done | jq -Rsc 'split("\n") | map(select(length > 0))')
+      dneed "$(jq -nc --arg repo "$ROOT" --argjson p "$paths" '{verb:"trees-add",repo:$repo,paths:$p}')"; print_trees; watch_hint ;;
+    rm)
+      [ $# -ge 1 ] || die "trees rm <dir>..."
+      paths=$(for d in "$@"; do if [ -d "$d" ]; then abs_dir "$d"; else printf '%s' "$d"; fi; echo; done | jq -Rsc 'split("\n") | map(select(length > 0))')
+      dneed "$(jq -nc --arg repo "$ROOT" --argjson p "$paths" '{verb:"trees-rm",repo:$repo,paths:$p}')"; echo "sankofa: stopped watching $*" ;;
+    off)  dneed "$(jq -nc --arg repo "$ROOT" '{verb:"trees-rm",repo:$repo}')"; echo "sankofa: no longer watching trees of $ROOT" ;;
+    scan)
+      dneed "$(jq -nc --arg repo "$ROOT" '{verb:"rescan",repo:$repo}')"
+      out=$(printf '%s' "$DOUT" | jq -c '.entries[]?' | render)
+      if [ -n "$out" ]; then printf '%s\n' "$out"; else echo "no new overlaps"; fi ;;
+    *) die "trees on|add <dir>...|list|scan|rm <dir>...|off" ;;
+  esac
+}
+
+print_bridge() {
+  printf '%s' "$DOUT" | jq -r '
+    if .state == "off" or .bridge == null then "bridge off"
+    else .bridge | "bridge on  every \(.interval) s, \(.refs) remote branches"
+      + (if .last_ok then "\n  last fetch ok   \(.last_ok)" else "" end)
+      + (if .last_error then "\n  last fetch FAILED \(.last_fetch): \(.last_error)" else "" end) end'
+}
+
+cmd_bridge() {
+  need_root
+  sub=${1:-status}; [ $# -gt 0 ] && shift
+  case $sub in
+    status) dneed "$(jq -nc --arg repo "$ROOT" '{verb:"bridge",repo:$repo}')"; print_bridge ;;
+    on)
+      iv=$(ttl_secs "${1:-5m}")
+      dneed "$(jq -nc --arg repo "$ROOT" --argjson iv "$iv" '{verb:"bridge",repo:$repo,on:true,interval:$iv}')"
+      print_bridge; watch_hint ;;
+    off) dneed "$(jq -nc --arg repo "$ROOT" '{verb:"bridge",repo:$repo,on:false}')"; print_bridge ;;
+    fetch)
+      dneed "$(jq -nc --arg repo "$ROOT" '{verb:"fetch",repo:$repo}')"
+      out=$(printf '%s' "$DOUT" | jq -c '.entries[]?' | render)
+      if [ -n "$out" ]; then printf '%s\n' "$out"; else echo "nothing new landed"; fi
+      printf '%s' "$DOUT" | jq -r '.bridge.last_error // empty | "sankofa: fetch failed: \(.)"' >&2 ;;
+    *) die "bridge on [interval]|off|status|fetch" ;;
+  esac
+}
+
 cmd_watch() {
   REG=$(watch_reg); mkdir -p "$(dirname "$REG")"; [ -f "$REG" ] || : > "$REG"
   sub=${1:-list}; [ $# -gt 0 ] && shift
@@ -473,6 +550,8 @@ main() {
     events)    cmd_events "$@" ;;
     daemon)    cmd_daemon "$@" ;;
     watch)     cmd_watch "$@" ;;
+    trees)     cmd_trees "$@" ;;
+    bridge)    cmd_bridge "$@" ;;
     version|-V|--version) echo "sankofa $VERSION" ;;
     ""|help|-h|--help) usage ;;
     *) die "unknown command '$cmd' (try: sankofa help)" ;;

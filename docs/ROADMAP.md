@@ -125,6 +125,24 @@ touch one path; `git fetch` loop recording `landed` events per branch.
 Tests: two temp worktrees, same path touched, one overlap event; a bare remote
 receives a push, one landed event.
 
+Outcome (0.6.0): both run inside `sankofad`. Overlaps: inotify (direct, one
+watch per source directory; `.git/`, ignored directories and nested repos are
+skipped) wakes a git scan 300 ms after a burst settles; a tree's changes count
+from its merge base with the home tree, so worktree commits count until merged.
+`sim/overlap.py` (5 trees, 1200 steps, inotify only) expected 261 overlaps and
+recorded exactly those: none missed, false or repeated, about 350 ms after the
+last write. Bridge: remote branches are compared with what the daemon last
+saw, kept in SQLite, so pushes made while the laptop slept or was off are
+reported on the first fetch after waking, and a boot fetches at once.
+`sim/overnight.py` (42 nights, SIGSTOP or reboot each night, a quarter of
+mornings with the network down) had 94 branches moved by routines and 94
+landed events, each toasted; it found that a human's own push followed by one
+more local commit was reported as a landing, now fixed by asking whether any
+local branch contains the tip. Exit, real: on this machine a routine pushed to
+a bare remote while `sankofad` was stopped; on start the landed event was
+recorded and the installed watcher toasted it. The GitHub remote of this repo
+is bridged; the overnight check against a real scheduled push is still open.
+
 ## 0.7 · hub
 
 Deliver: HTTP listener (MCP streamable HTTP + a small JSON API), device

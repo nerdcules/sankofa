@@ -46,6 +46,10 @@ static class Defaults
         return v;
     }
 
+    /// <summary>A duration in seconds from the environment (tests and simulations speed the loops up).</summary>
+    public static double Seconds(string env, double fallback) =>
+        double.TryParse(Environment.GetEnvironmentVariable(env), System.Globalization.CultureInfo.InvariantCulture, out var v) && v > 0 ? v : fallback;
+
     public static long TtlSeconds(string? s, long fallback)
     {
         if (string.IsNullOrWhiteSpace(s)) return fallback;

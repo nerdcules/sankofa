@@ -1,6 +1,6 @@
 #!/bin/sh
 # sankofa-watch - desktop toasts for new ledger entries in every registered repo.
-# Iteration 0.2. POSIX sh + jq + inotifywait + notify-send. Runs as a systemd user service.
+# Iteration 0.2; overlap and landed events since 0.6. POSIX sh + jq + inotifywait + notify-send. Runs as a systemd user service.
 #
 #   sankofa-watch          watch forever (the service)
 #   sankofa-watch --once   scan once and exit (tests, cron, catch-up)
@@ -8,7 +8,7 @@
 # Registry: $XDG_CONFIG_HOME/sankofa/watched, one repo root per line (sankofa watch add).
 # Offsets:  $XDG_STATE_HOME/sankofa/offsets, lines read per ledger, so nothing is toasted
 #           twice and entries written while the service was down are toasted on return.
-# Env: SANKOFA_TOAST_TYPES (default "awaiting"; add "note" to see every handoff note), SANKOFA_TOAST_BURST (default 5: more new
+# Env: SANKOFA_TOAST_TYPES (default "awaiting overlap landed"; add "note" to see every handoff note), SANKOFA_TOAST_BURST (default 5: more new
 #      entries than this in one scan become one summary toast), SANKOFA_WATCH_TIMEOUT
 #      (default 30: seconds between rescans if inotify misses a wakeup).
 set -eu
@@ -16,7 +16,7 @@ CONF=${XDG_CONFIG_HOME:-$HOME/.config}/sankofa
 STATE=${XDG_STATE_HOME:-$HOME/.local/state}/sankofa
 REG=$CONF/watched
 OFF=$STATE/offsets
-TYPES=${SANKOFA_TOAST_TYPES:-awaiting}
+TYPES=${SANKOFA_TOAST_TYPES:-awaiting overlap landed}
 BURST=${SANKOFA_TOAST_BURST:-5}
 TIMEOUT=${SANKOFA_WATCH_TIMEOUT:-30}
 mkdir -p "$CONF" "$STATE"; touch "$REG" "$OFF"
@@ -61,6 +61,8 @@ latest awaiting: $last}"
     | while IFS="$(printf '\t')" read -r type agent text; do
         case $type in
           awaiting) toast critical "$name: awaiting you" "$text" ;;
+          overlap)  toast normal "$name: two worktrees changed one path" "$text" ;;
+          landed)   toast normal "$name: work landed on the remote" "$text" ;;
           *)        toast normal "$name: $type" "[$agent] $text" ;;
         esac
       done

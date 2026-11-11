@@ -13,12 +13,12 @@ public sealed class SankofaException(string message) : Exception(message);
 /// fallback while the daemon was down are imported on the next touch of that repo.
 /// The store records and answers; it never decides for an agent.
 /// </summary>
-public sealed class Store : IDisposable
+public sealed partial class Store : IDisposable
 {
-    public const string Version = "0.5.0";
+    public const string Version = "0.6.0";
     public const long DefaultTtlSeconds = 1800;
     static readonly HashSet<string> AppendTypes = ["note", "todo", "awaiting", "stop", "flag"];
-    const string Cols = "seq, repo, id, ts, type, session, agent, text, ref, wt, glob, expires, nonce";
+    const string Cols = "seq, repo, id, ts, type, session, agent, text, ref, wt, glob, expires, nonce, branch, sha";
     const string LeaseCols = "id, glob, session, agent, claimed, expires, dirty, state";
 
     readonly Db db;
@@ -76,6 +76,10 @@ public sealed class Store : IDisposable
             """);
         // 0.4: when a lease was last claimed or renewed (databases from 0.3 lack the column)
         try { db.Exec("ALTER TABLE leases ADD COLUMN touched TEXT"); } catch (SqliteException) { }
+        // 0.6: landed events name a branch and a commit
+        try { db.Exec("ALTER TABLE events ADD COLUMN branch TEXT"); } catch (SqliteException) { }
+        try { db.Exec("ALTER TABLE events ADD COLUMN sha TEXT"); } catch (SqliteException) { }
+        InitWatch();
     }
 
     public const long DefaultHandoverIdleSeconds = 5;
@@ -449,9 +453,10 @@ public sealed class Store : IDisposable
 
     long Insert(string repo, Entry e, string source) =>
         (long)db.Query("""
-            INSERT INTO events(repo,id,ts,type,session,agent,text,ref,wt,glob,expires,nonce,source)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING seq
-            """, repo, e.Id, e.Ts, e.Type, e.Session, e.Agent, e.Text, e.Ref, e.Wt, e.Glob, e.Expires, e.Nonce, source)[0][0]!;
+            INSERT INTO events(repo,id,ts,type,session,agent,text,ref,wt,glob,expires,nonce,branch,sha,source)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING seq
+            """, repo, e.Id, e.Ts, e.Type, e.Session, e.Agent, e.Text, e.Ref, e.Wt, e.Glob, e.Expires, e.Nonce,
+                 e.Branch, e.Sha, source)[0][0]!;
 
     /// <summary>Lease state follows from events; imported events go through here too.</summary>
     void Apply(string repo, Entry e)
@@ -514,5 +519,6 @@ public sealed class Store : IDisposable
             Seq = (long)r[0]!, Repo = (string)r[1]!, Id = (string)r[2]!, Ts = (string)r[3]!, Type = (string)r[4]!,
             Session = (string)r[5]!, Agent = (string)r[6]!, Text = (string)r[7]!, Ref = (string?)r[8],
             Wt = (string?)r[9], Glob = (string?)r[10], Expires = (string?)r[11], Nonce = (string?)r[12],
+            Branch = (string?)r[13], Sha = (string?)r[14],
         }).ToList();
 }
