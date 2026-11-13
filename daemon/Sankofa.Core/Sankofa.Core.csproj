@@ -11,4 +11,9 @@
   <ItemGroup>
     <InternalsVisibleTo Include="Sankofa.Tests" />
   </ItemGroup>
+  <!-- Windows has no system sqlite3 to link by name the way Linux and macOS do: ship e_sqlite3.dll
+       beside the binaries (the resolver in Sqlite.cs looks for it first there). -->
+  <ItemGroup Condition="$(RuntimeIdentifier.StartsWith('win'))">
+    <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="3.53.3" />
+  </ItemGroup>
 </Project>

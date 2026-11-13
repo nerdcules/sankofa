@@ -2,10 +2,22 @@ namespace Sankofa;
 
 public static class Defaults
 {
+    /// <summary>
+    /// The daemon's socket: SANKOFA_SOCKET; else on Linux $XDG_RUNTIME_DIR/sankofa/sankofad.sock
+    /// (or systemd's /run/user/&lt;uid&gt;); on macOS $TMPDIR/sankofa/sankofad.sock (per user there);
+    /// on Windows %LOCALAPPDATA%\sankofa\sankofad.sock (Unix sockets exist there since Windows 10).
+    /// </summary>
     public static string Socket()
     {
         var env = Environment.GetEnvironmentVariable("SANKOFA_SOCKET");
         if (!string.IsNullOrEmpty(env)) return env;
+        if (OperatingSystem.IsWindows())
+            return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "sankofa", "sankofad.sock");
+        if (OperatingSystem.IsMacOS())
+        {
+            var tmp = Environment.GetEnvironmentVariable("TMPDIR");
+            return Path.Combine(string.IsNullOrEmpty(tmp) ? $"/tmp/sankofa-{Environment.UserName}" : tmp, "sankofa", "sankofad.sock");
+        }
         var run = Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR");
         // clients may strip the environment (Codex does for MCP servers): use systemd's runtime dir
         if (string.IsNullOrEmpty(run) && Directory.Exists($"/run/user/{Uid()}")) run = $"/run/user/{Uid()}";
@@ -13,21 +25,24 @@ public static class Defaults
     }
 
     [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "getuid")] static extern uint GetUid();
-    static uint Uid() => GetUid();
+    static uint Uid() => OperatingSystem.IsWindows() ? 0 : GetUid();
 
     public static string Db()
     {
         var env = Environment.GetEnvironmentVariable("SANKOFA_DB");
         if (!string.IsNullOrEmpty(env)) return env;
-        var data = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
-        if (string.IsNullOrEmpty(data)) data = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "share");
-        return Path.Combine(data, "sankofa", "sankofa.db");
+        return Path.Combine(Xdg("XDG_DATA_HOME", ".local", "share"), "sankofa", "sankofa.db");
     }
 
-    static string Xdg(string var, params string[] fallback)
+    /// <summary>An XDG base directory: the variable, else ~/&lt;fallback&gt; on Unix, else the matching
+    /// Windows folder (%APPDATA% for config, %LOCALAPPDATA% for data and state).</summary>
+    public static string Xdg(string var, params string[] fallback)
     {
         var v = Environment.GetEnvironmentVariable(var);
-        return string.IsNullOrEmpty(v) ? Path.Combine([Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), .. fallback]) : v;
+        if (!string.IsNullOrEmpty(v)) return v;
+        if (OperatingSystem.IsWindows())
+            return Environment.GetFolderPath(var == "XDG_CONFIG_HOME" ? Environment.SpecialFolder.ApplicationData : Environment.SpecialFolder.LocalApplicationData);
+        return Path.Combine([Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), .. fallback]);
     }
 
     /// <summary>This device's hub client config: url=, token=, device= (sankofa hub join).</summary>
@@ -47,7 +62,7 @@ public static class Defaults
         for (var d = Path.GetFullPath(dir); d is not null; d = Path.GetDirectoryName(d))
         {
             if (Directory.Exists(Path.Combine(d, ".sankofa"))) return d;
-            if (d == "/") break;
+            if (d == "/" || Path.GetPathRoot(d) == d) break;
         }
         return null;
     }

@@ -322,8 +322,7 @@ public sealed class Server
                 {
                     var repo = Repo();
                     if (store.Bridge(repo) is null) throw new SankofaException("the bridge is not on for this repo (sankofa bridge on)");
-                    var landed = (Bridge ?? new Bridge(store)).Poll(repo)
-                                 ?? throw new SankofaException("a fetch of this repo is already running");
+                    var landed = (Bridge ?? new Bridge(store)).Poll(repo);   // waits for a poll already in flight
                     return new Response { Entries = landed, Bridge = store.Bridge(repo) };
                 }
                 default:
