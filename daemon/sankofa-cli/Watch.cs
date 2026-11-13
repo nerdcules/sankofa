@@ -144,9 +144,10 @@ public static class Watch
     {
         try
         {
-            if (OperatingSystem.IsMacOS()) ToastMac(title, body);
-            else if (OperatingSystem.IsWindows()) ToastWindows(title, body);
-            else ToastLinux(urgency, title, body);
+            // a notify-send on PATH wins on every system: a desktop that has one, or a test's fake
+            if (OperatingSystem.IsLinux() || Env.Sibling("notify-send") is not null) ToastLinux(urgency, title, body);
+            else if (OperatingSystem.IsMacOS()) ToastMac(title, body);
+            else ToastWindows(title, body);
         }
         catch (Exception ex) when (ex is IOException or System.ComponentModel.Win32Exception or InvalidOperationException)
         {

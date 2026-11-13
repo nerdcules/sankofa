@@ -21,7 +21,9 @@ assert_eq "$(jq -r .id "$A" | grep -c '^q' || :)" 0 "and nothing queued"
 start_hub
 wait_for 5 '[ "$(dev a "$S" hub status | grep -c online)" -ge 1 ]' || fail "desk back online"
 
-out=$(dev a "$S" leases settle)
+# the replica catches up with the hub a moment after it is back online
+i=0; out=$(dev a "$S" leases settle)
+while ! printf '%s' "$out" | grep -qF -- "$ld" && [ $i -lt 20 ]; do sleep 0.25; i=$((i + 1)); out=$(dev a "$S" leases settle); done
 assert_contains "$out" "$ld" "desk settles its own lease"
 case $out in *"$ll"*) fail "desk settled lap's lease" ;; esac
 wait_for 3 '[ -z "$(state b "$ld")" ]' || fail "lap sees desk's lease settled"
