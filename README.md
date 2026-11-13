@@ -91,6 +91,6 @@ of use in minutes ([docs/ROADMAP.md](docs/ROADMAP.md)):
 
 ## Status
 
-Iteration 0.12. The daemon, hooks and gates run on Linux; the window runs on
+Iteration 0.13. The daemon, hooks and gates run on Linux; the window runs on
 Windows, macOS and Linux and reads a ledger. A Mac port of the daemon is
 [the next big item](https://github.com/nerdcules/sankofa/issues). MIT licence.
