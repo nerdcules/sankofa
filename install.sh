@@ -6,7 +6,9 @@
 # sankofad is missing and the .NET SDK is present; without it the CLI works on the local
 # ledger alone. Registers `sankofad mcp` with Claude Code (claude mcp add) and Codex
 # (~/.codex/config.toml) when they are installed.
-# Idempotent. --uninstall reverses it all.
+# Idempotent. --uninstall reverses it all. --packaged (what `sankofa setup` runs after a .deb
+# or Arch install): the commands are already in /usr/bin and the units in /usr/lib/systemd/user,
+# so only the hooks, the services and the client registrations are set up.
 # Env: SANKOFA_NO_MCP=1 skips the client registrations; CODEX_HOME locates Codex's config.
 # Env: XDG_BIN_HOME, CLAUDE_SETTINGS, XDG_CONFIG_HOME; SANKOFA_NO_SYSTEMD=1 writes the
 # unit but does not call systemctl (tests, containers).
@@ -61,6 +63,7 @@ HOOKS='[
   {"ev":"PreToolUse","matcher":"Edit|Write|MultiEdit|NotebookEdit","cmd":"sankofad gate claude-code","timeout":5}
 ]'
 
+PACKAGED=0; [ "${1:-}" = --packaged ] && { PACKAGED=1; shift; }
 command -v jq >/dev/null || { echo "install: jq is required" >&2; exit 1; }
 mkdir -p "$BIN" "$(dirname "$SETTINGS")"
 [ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
@@ -90,9 +93,14 @@ if [ "${1:-}" = --uninstall ]; then
   exit 0
 fi
 
-ln -sf "$HERE/bin/sankofa" "$BIN/sankofa"
-ln -sf "$HERE/bin/sankofa-watch" "$BIN/sankofa-watch"
-echo "install: $BIN/sankofa and $BIN/sankofa-watch -> $HERE/bin"
+if [ $PACKAGED = 1 ]; then
+  command -v sankofa >/dev/null || { echo "install: --packaged, but sankofa is not on PATH" >&2; exit 1; }
+  echo "install: packaged: $(command -v sankofa) and $(command -v sankofad 2>/dev/null || echo 'no sankofad')"
+else
+  ln -sf "$HERE/bin/sankofa" "$BIN/sankofa"
+  ln -sf "$HERE/bin/sankofa-watch" "$BIN/sankofa-watch"
+  echo "install: $BIN/sankofa and $BIN/sankofa-watch -> $HERE/bin"
+fi
 
 if jq -e --argjson hs "$HOOKS" '. as $s | all($hs[]; . as $h | ([$s.hooks[$h.ev][]?.hooks[]?.command] | index($h.cmd)) != null)' \
      "$SETTINGS" >/dev/null; then
@@ -107,6 +115,15 @@ else
            + (if $h.matcher then {matcher:$h.matcher} else {} end))]) end;
     reduce $hs[] as $h (.; add($h))' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
   echo "install: added the Stop, SubagentStop, SessionEnd and PreToolUse (edit gate) hooks to $SETTINGS (backup kept beside it)"
+fi
+
+if [ $PACKAGED = 1 ]; then
+  sysd daemon-reload
+  for u in $UNITS; do sysd enable "$u"; sysd restart "$u"; done
+  echo "install: user services enabled (units from the package)"
+  mcp_register
+  echo "install: in each repo that should keep a ledger: sankofa init; sankofa watch add; sankofa gate install"
+  exit 0
 fi
 
 DAEMON=$HERE/bin/out/sankofad

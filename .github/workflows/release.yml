@@ -1,0 +1,104 @@
+# Builds the release packages. On a tag (v1.2.3) it also publishes them as a GitHub Release;
+# run by hand (workflow_dispatch) it only builds and keeps them as workflow artifacts.
+name: release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  linux:
+    strategy:
+      matrix:
+        include:
+          - { os: ubuntu-24.04, arch: x64 }
+          - { os: ubuntu-24.04-arm, arch: arm64 }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y clang zlib1g-dev jq git
+      - name: version from the tag, else from the CLI
+        id: v
+        run: |
+          case "$GITHUB_REF" in refs/tags/v*) echo "version=${GITHUB_REF_NAME#v}" ;; *) echo "version=$(sed -n 's/^VERSION=//p' bin/sankofa)" ;; esac >> "$GITHUB_OUTPUT"
+      - run: make dist VERSION=${{ steps.v.outputs.version }} ARCH=${{ matrix.arch }}
+      - name: the .deb as dpkg sees it
+        run: |
+          dpkg-deb --info dist/sankofa_*.deb
+          dpkg-deb --contents dist/sankofa_*.deb | awk '{print $6}' | sort
+      - name: the tarball installs from where it is unpacked
+        run: sh tests/repo/test_dist.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: |
+            dist/sankofa-linux-*.tar.gz
+            dist/sankofa_*.deb
+  window:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - run: sudo apt-get update && sudo apt-get install -y zip
+      - run: make gui-dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: window
+          path: dist/sankofa-gui-*.zip
+  publish:
+    needs: [linux, window]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - name: release notes
+        run: |
+          v=${GITHUB_REF_NAME#v}
+          {
+            echo "## Get it"
+            echo
+            echo "See [docs/INSTALL.md](https://github.com/nerdcules/sankofa/blob/$GITHUB_REF_NAME/docs/INSTALL.md) for what each file is and what the install does."
+            echo
+            echo '| Linux | | '
+            echo '|---|---|'
+            echo "| one line | \`curl -fsSL https://raw.githubusercontent.com/nerdcules/sankofa/main/get.sh \| sh\` |"
+            echo "| Debian, Ubuntu (x64) | sankofa_${v}_amd64.deb, then \`sankofa setup\` |"
+            echo "| Debian, Ubuntu (arm64) | sankofa_${v}_arm64.deb, then \`sankofa setup\` |"
+            echo "| any Linux (x64) | sankofa-linux-x64.tar.gz: unpack, run install.sh |"
+            echo "| any Linux (arm64) | sankofa-linux-arm64.tar.gz: unpack, run install.sh |"
+            echo "| Arch | \`cd packaging/arch && makepkg -si\` from the source |"
+            echo
+            echo '| The window only (reads a ledger; the daemon and hooks are Linux) | |'
+            echo '|---|---|'
+            echo '| Windows | sankofa-gui-win-x64.zip, sankofa-gui-win-arm64.zip |'
+            echo '| macOS | sankofa-gui-osx-arm64.zip (Apple silicon), sankofa-gui-osx-x64.zip |'
+            echo '| Linux arm64 | sankofa-gui-linux-arm64.zip |'
+            echo
+            echo "## What changed"
+            echo
+            echo "See [docs/ROADMAP.md](https://github.com/nerdcules/sankofa/blob/$GITHUB_REF_NAME/docs/ROADMAP.md): each iteration's outcome is written there with its tests and simulations."
+          } > notes.md
+      - name: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -la out
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" out/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" out/* --title "sankofa $GITHUB_REF_NAME" --notes-file notes.md
+          fi
