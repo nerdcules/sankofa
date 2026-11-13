@@ -1,0 +1,90 @@
+<svg color="#1B2430" font-family="'IBM Plex Sans','Segoe UI',system-ui,sans-serif" viewBox="0 0 1000 620" role="img" aria-label="A map of tools that sit between AI coding sessions. Rows: what the tool does, from recording to deciding. Columns: how far it reaches, from one client to any device. sankofa sits at blocks the edit, any client, any device." xmlns="http://www.w3.org/2000/svg">
+<rect width="100%" height="100%" fill="#F5F7FA"/>
+<style>.mono { font-family:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,monospace; }</style>
+
+  <text x="30" y="40" font-size="17" font-weight="600" fill="#1B2430">What sits between sessions, and how far it reaches</text>
+  <text x="30" y="60" font-size="12" fill="#5E6B7A">Each dot is one tool. Up: it does more with what it holds. Right: it reaches more sessions.</text>
+
+  <!-- Column headers -->
+  <text x="275" y="100" text-anchor="middle" font-size="13" font-weight="600" fill="#1B2430">One client</text>
+  <text x="275" y="116" text-anchor="middle" font-size="11" fill="#5E6B7A">Claude Code or Cursor only</text>
+  <text x="525" y="100" text-anchor="middle" font-size="13" font-weight="600" fill="#1B2430">Any client, one machine</text>
+  <text x="525" y="116" text-anchor="middle" font-size="11" fill="#5E6B7A">a local server or socket</text>
+  <text x="810" y="100" text-anchor="middle" font-size="13" font-weight="600" fill="#1B2430">Any client, any device</text>
+  <text x="810" y="116" text-anchor="middle" font-size="11" fill="#5E6B7A">through git, a hub, or a hosted service</text>
+
+  <!-- Grid -->
+  <rect x="150" y="124" width="820" height="440" fill="#FFFFFF" stroke="#1B2430" stroke-width="1"/>
+  <line x1="400" y1="124" x2="400" y2="564" stroke="#5E6B7A" stroke-width="0.8" stroke-dasharray="3 4"/>
+  <line x1="650" y1="124" x2="650" y2="564" stroke="#5E6B7A" stroke-width="0.8" stroke-dasharray="3 4"/>
+  <line x1="150" y1="212" x2="970" y2="212" stroke="#5E6B7A" stroke-width="0.8" stroke-dasharray="3 4"/>
+  <line x1="150" y1="300" x2="970" y2="300" stroke="#5E6B7A" stroke-width="0.8" stroke-dasharray="3 4"/>
+  <line x1="150" y1="388" x2="970" y2="388" stroke="#5E6B7A" stroke-width="0.8" stroke-dasharray="3 4"/>
+  <line x1="150" y1="476" x2="970" y2="476" stroke="#5E6B7A" stroke-width="0.8" stroke-dasharray="3 4"/>
+
+  <!-- Row labels -->
+  <text x="140" y="162" text-anchor="end" font-size="13" font-weight="600" fill="#B45309">Decides</text>
+  <text x="140" y="178" text-anchor="end" font-size="11" fill="#B45309">assigns work</text>
+  <text x="140" y="250" text-anchor="end" font-size="13" font-weight="600" fill="#1B2430">Blocks</text>
+  <text x="140" y="266" text-anchor="end" font-size="11" fill="#5E6B7A">refuses an edit or a commit</text>
+  <text x="140" y="338" text-anchor="end" font-size="13" font-weight="600" fill="#1B2430">Reserves paths</text>
+  <text x="140" y="354" text-anchor="end" font-size="11" fill="#5E6B7A">advisory; agents may ignore</text>
+  <text x="140" y="426" text-anchor="end" font-size="13" font-weight="600" fill="#1B2430">Holds state</text>
+  <text x="140" y="442" text-anchor="end" font-size="11" fill="#5E6B7A">tasks, notes, handoffs</text>
+  <text x="140" y="514" text-anchor="end" font-size="13" font-weight="600" fill="#1B2430">Records</text>
+  <text x="140" y="530" text-anchor="end" font-size="11" fill="#5E6B7A">what happened, for later</text>
+
+  <!-- Decides -->
+  <circle cx="180" cy="168" r="6" fill="#FFFFFF" stroke="#1B2430" stroke-width="1.5"/>
+  <text x="194" y="172" font-size="12" fill="#1B2430">Agent Teams: the lead assigns tasks</text>
+  <circle cx="430" cy="168" r="6" fill="#FFFFFF" stroke="#1B2430" stroke-width="1.5"/>
+  <text x="444" y="172" font-size="12" fill="#1B2430">Gas Town: a Mayor agent,</text>
+  <text x="444" y="188" font-size="12" fill="#1B2430">roles, convoys, on Beads</text>
+
+  <!-- Blocks -->
+  <circle cx="430" cy="256" r="6" fill="#1B2430" stroke="#1B2430" stroke-width="1.5"/>
+  <text x="444" y="252" font-size="12" fill="#1B2430">MCP Agent Mail: pre-commit guard,</text>
+  <text x="444" y="268" font-size="12" fill="#5E6B7A">bypassed with one env var</text>
+  <line x1="430" y1="262" x2="430" y2="338" stroke="#1B2430" stroke-width="1" stroke-dasharray="4 3"/>
+  <circle cx="680" cy="256" r="7" fill="#0E7490" stroke="#0E7490" stroke-width="1.5"/>
+  <text x="694" y="252" font-size="12" font-weight="600" fill="#0E7490">sankofa: edit gate before the write,</text>
+  <text x="694" y="268" font-size="12" fill="#0E7490">git gate at commit; hub across devices</text>
+
+  <!-- Reserves paths -->
+  <circle cx="180" cy="344" r="6" fill="#FFFFFF" stroke="#1B2430" stroke-width="1.5"/>
+  <text x="194" y="348" font-size="12" fill="#1B2430">MCP Agent Coordinator (Cursor)</text>
+  <circle cx="430" cy="344" r="6" fill="#FFFFFF" stroke="#1B2430" stroke-width="1.5"/>
+  <text x="444" y="340" font-size="12" fill="#1B2430">MCP Agent Mail: reservations</text>
+  <text x="444" y="356" font-size="12" fill="#5E6B7A">on globs, with a TTL</text>
+  <circle cx="680" cy="330" r="6" fill="#FFFFFF" stroke="#1B2430" stroke-width="1.5"/>
+  <text x="694" y="334" font-size="12" fill="#1B2430">Vibsync: hosted MCP claims</text>
+  <circle cx="680" cy="360" r="6" fill="#FFFFFF" stroke="#1B2430" stroke-width="1.5"/>
+  <text x="694" y="364" font-size="12" fill="#1B2430">agentsync: claims file on a git branch</text>
+
+  <!-- Holds state -->
+  <circle cx="180" cy="418" r="6" fill="#FFFFFF" stroke="#1B2430" stroke-width="1.5"/>
+  <text x="194" y="422" font-size="12" fill="#1B2430">Agent Teams: task list, mailbox</text>
+  <circle cx="180" cy="448" r="6" fill="#FFFFFF" stroke="#1B2430" stroke-width="1.5"/>
+  <text x="194" y="452" font-size="12" fill="#1B2430">Continuous-Claude: ledger via hooks</text>
+  <circle cx="680" cy="418" r="6" fill="#FFFFFF" stroke="#1B2430" stroke-width="1.5"/>
+  <text x="694" y="422" font-size="12" fill="#1B2430">Beads: issue graph in Dolt, synced over git</text>
+  <circle cx="680" cy="448" r="6" fill="#FFFFFF" stroke="#1B2430" stroke-width="1.5"/>
+  <text x="694" y="452" font-size="12" fill="#1B2430">ai-memory: git wiki, typed handoffs</text>
+
+  <!-- Records -->
+  <circle cx="680" cy="506" r="6" fill="#FFFFFF" stroke="#1B2430" stroke-width="1.5"/>
+  <text x="694" y="510" font-size="12" fill="#1B2430">Entire CLI: each session as a git ref</text>
+  <circle cx="680" cy="536" r="6" fill="#FFFFFF" stroke="#1B2430" stroke-width="1.5"/>
+  <text x="694" y="540" font-size="12" fill="#1B2430">HANDOFF.md, a JSON ledger in the repo</text>
+
+  <!-- Legend -->
+  <circle cx="160" cy="592" r="6" fill="#FFFFFF" stroke="#1B2430" stroke-width="1.5"/>
+  <text x="172" y="596" font-size="11.5" fill="#5E6B7A">advisory or a record</text>
+  <circle cx="320" cy="592" r="6" fill="#1B2430"/>
+  <text x="332" y="596" font-size="11.5" fill="#5E6B7A">refuses something</text>
+  <circle cx="460" cy="592" r="7" fill="#0E7490"/>
+  <text x="472" y="596" font-size="11.5" fill="#5E6B7A">sankofa</text>
+  <line x1="540" y1="592" x2="570" y2="592" stroke="#1B2430" stroke-width="1" stroke-dasharray="4 3"/>
+  <text x="578" y="596" font-size="11.5" fill="#5E6B7A">one tool at two levels</text>
+  <text x="720" y="596" font-size="11.5" fill="#B45309">amber row: a sankofa non-goal</text>
+</svg>
