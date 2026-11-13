@@ -63,7 +63,7 @@ public sealed class Tokens(string path)
         lock (gate)
         {
             File.AppendAllText(path, $"{Hash(t)} {device}\n");
-            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
         }
         return t;
     }
@@ -77,7 +77,7 @@ public sealed class Tokens(string path)
             var lines = File.ReadAllLines(path);
             var keep = lines.Where(l => l.Split(' ', 2, StringSplitOptions.TrimEntries) is var p && !(p.Length == 2 && p[1] == device)).ToList();
             File.WriteAllLines(path + ".tmp", keep);
-            File.SetUnixFileMode(path + ".tmp", UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(path + ".tmp", UnixFileMode.UserRead | UnixFileMode.UserWrite);
             File.Move(path + ".tmp", path, overwrite: true);
             return lines.Length - keep.Count;
         }
