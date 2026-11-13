@@ -28,7 +28,7 @@ assert_contains "$(printf '%s' "$ev" | jq -r .text)" '"nightly run" by Routine' 
 
 # commits to an existing branch, while the daemon is down (the machine asleep): reported on return
 stop_daemon
-(cd "$T/routine" && for i in 1 2; do echo $i >> n.txt; g commit -qam "step $i"; done && g push -q 2>/dev/null)
+(cd "$T/routine" && for i in 1 2; do echo $i >> n.txt; g commit -qam "step $i"; done && g push -q origin routine/nightly 2>/dev/null)
 git fetch -q   # the human's own fetch moves origin/... first; still reported
 start_daemon
 "$S" bridge fetch >/dev/null
