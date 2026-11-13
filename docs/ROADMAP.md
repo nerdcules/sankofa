@@ -514,3 +514,39 @@ leases and toasts seen on all three. In CI if the runners can reach one
 another (they cannot today: one hub in a container on Linux with two more
 devices simulated there is the fallback, `sim/hub.py --docker`), else by hand
 on three real machines, written up here.
+
+Outcome (0.14.0, 2026-11-13): the shell CLI (1,135 lines, 81 jq calls) is
+gone; `sankofa` is one Native AOT binary built from `daemon/sankofa-cli` on
+the same core as the daemon, and `bin/sankofa` is a two-line launcher for a
+checkout. Four agents ported it in parallel in their own worktrees (hooks,
+leases and the admin verbs; handoff and pickup; the platform pieces; CI,
+packaging and docs), each against the existing shell tests as the spec, and
+`sim/handoff.py` and `sim/crash.py` (396 cases) passed against the port
+before the shell went. The daemon's Linux ties are behind `ITreeWatcher`
+(inotify there, FileSystemWatcher elsewhere), a per-kernel ledger lock, a
+SQLite resolver (the system library on Linux and macOS, `e_sqlite3.dll`
+beside the binaries on Windows), and per-OS defaults for the socket and the
+data folders. `sankofa watch serve|once` replaces `sankofa-watch`;
+`install.sh` writes launchd agents on macOS; `sankofa setup` does the
+Windows work natively. The bridge's `fetch` now waits for a poll already in
+flight instead of refusing.
+
+CI on three runners found what one machine cannot: Ubuntu's dash reads
+`kill -- -pgid` as a pid; a Python `sqlite3.dll` on the Windows runner's PATH
+crashed the daemon until the resolver stopped asking for a bare `sqlite3`;
+on arm64 macOS the variadic `open(2)` never received its mode argument, so
+the lock file was created unreadable; a shell's `$PWD` under `/var/folders`
+and getcwd's `/private/var/...` keyed one repo two ways, so a lease the gate
+made was invisible to the CLI (paths are now resolved through `realpath`
+before the root is looked up); macOS's `sh` keeps an assignment made before
+a function call, so the suite runs under bash there; and a dozen test-only
+portability points (BSD `wc`, `date +%N`, `sed -i`, `setsid`, bash 3.2's
+`case` inside `$( )`, a 1 s lease outrun by a slow runner). Runner latency
+budgets: twice the local ones on Linux and Windows, six times on macOS,
+where a process starts in about 40 ms.
+
+The mix-and-match claim rests on identical code, one ledger format and one
+protocol, verified by the same suite passing on the three systems; the
+three-machine handoff in the exit criterion was not run on real hardware
+(no Mac or Windows machine here), so it stays open for the first person with
+all three.
