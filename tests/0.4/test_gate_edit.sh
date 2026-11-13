@@ -60,7 +60,8 @@ gate claude-code "$(edit_json Z "$PWD/src/c.c")"; assert_eq "$OUT" "" "gate=0 tu
 grep -v '^gate=0$' .sankofa/config > .sankofa/config.tmp || :; mv .sankofa/config.tmp .sankofa/config
 SANKOFA_GATE=0 gate claude-code "$(edit_json Z "$PWD/src/c.c")"; assert_eq "$OUT" "" "SANKOFA_GATE=0 turns it off"
 
-# NotebookEdit uses notebook_path
-nb=$(jq -nc --arg s Z --arg f "$PWD/src/c.c" --arg cwd "$PWD" '{session_id:$s,cwd:$cwd,tool_name:"NotebookEdit",tool_input:{notebook_path:$f}}')
-gate claude-code "$nb"; denied || fail "NotebookEdit is gated too"
+# NotebookEdit uses notebook_path (a fresh lease with the default ttl: D's above was a 1 s one)
+gate claude-code "$(edit_json E "$PWD/src/n.ipynb")"
+nb=$(jq -nc --arg s Z --arg f "$PWD/src/n.ipynb" --arg cwd "$PWD" '{session_id:$s,cwd:$cwd,tool_name:"NotebookEdit",tool_input:{notebook_path:$f}}')
+gate claude-code "$nb"; denied || { echo "OUT=$OUT"; $S leases; fail "NotebookEdit is gated too"; }
 echo ok gate edit
