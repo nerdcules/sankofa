@@ -13,7 +13,7 @@
   </ItemGroup>
   <!-- Windows has no system sqlite3 to link by name the way Linux and macOS do: ship e_sqlite3.dll
        beside the binaries (the resolver in Sqlite.cs looks for it first there). -->
-  <ItemGroup Condition="$(RuntimeIdentifier.StartsWith('win'))">
+  <ItemGroup Condition="$(RuntimeIdentifier.StartsWith('win')) Or $([MSBuild]::IsOSPlatform('Windows'))">
     <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="3.53.3" />
   </ItemGroup>
 </Project>
