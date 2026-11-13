@@ -2,6 +2,7 @@
 . "$(dirname "$0")/lib.sh"
 export HOME=$T/home CLAUDE_SETTINGS=$T/home/.claude/settings.json SANKOFA_NO_SYSTEMD=1 SANKOFA_NO_BUILD=1
 export CODEX_HOME=$T/home/.codex PATH="$T/nobin:$PATH"
+export SANKOFA_UNAME=Linux   # the systemd branch on every OS; the launchd one is tests/0.14/test_platform.sh
 mkdir -p "$CODEX_HOME" "$T/nobin"
 printf '#!/bin/sh\nexit 1\n' > "$T/nobin/claude"; chmod +x "$T/nobin/claude"   # a claude that registers nothing
 printf 'model = "x"\n\n[mcp_servers.other]\ncommand = "other"\n' > "$CODEX_HOME/config.toml"

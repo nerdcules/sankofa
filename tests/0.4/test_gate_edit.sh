@@ -56,7 +56,7 @@ mkdir -p "$T/../$$-outside" 2>/dev/null || :
 gate claude-code "$(edit_json B /etc/hosts)"; assert_eq "$OUT" "" "file outside a ledger repo"
 printf 'gate=0\n' >> .sankofa/config
 gate claude-code "$(edit_json Z "$PWD/src/c.c")"; assert_eq "$OUT" "" "gate=0 turns it off"
-sed -i '/^gate=0$/d' .sankofa/config
+grep -v '^gate=0$' .sankofa/config > .sankofa/config.tmp || :; mv .sankofa/config.tmp .sankofa/config
 SANKOFA_GATE=0 gate claude-code "$(edit_json Z "$PWD/src/c.c")"; assert_eq "$OUT" "" "SANKOFA_GATE=0 turns it off"
 
 # NotebookEdit uses notebook_path

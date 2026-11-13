@@ -28,6 +28,7 @@ stop_daemon() { [ -n "$DPID" ] && { kill "$DPID"; wait "$DPID" 2>/dev/null || :;
 [ "${SANKOFA_TEST_DAEMON:-0}" = 1 ] && start_daemon
 cd "$T"
 unset CLAUDE_CODE_SESSION_ID CLAUDE_SESSION_ID SANKOFA_SESSION SANKOFA_AGENT SANKOFA_REQUIRE_NOTE || true
+now_ns() { python3 -c 'import time; print(time.time_ns())'; }   # date +%N is GNU only
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 assert_eq() { [ "$1" = "$2" ] || fail "$3: expected [$2] got [$1]"; }
 assert_contains() { printf '%s' "$1" | grep -qF -- "$2" || fail "$3: [$1] lacks [$2]"; }
