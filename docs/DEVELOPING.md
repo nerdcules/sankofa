@@ -8,15 +8,17 @@ delivered, with its tests and the simulation that gated it: [ROADMAP.md](ROADMAP
 ## Layout
 
 ```
-bin/sankofa            the CLI (POSIX sh + jq); bin/sankofa-watch, the desktop notifier
+bin/sankofa            launchers for a checkout: the command and the notifier are bin/out/sankofa
+                       (bin/sankofa-watch runs `sankofa watch serve`)
 hooks/                 the client adapters: claude-code/, codex/, and the git pre-commit gate
 daemon/Sankofa.Core    the store (SQLite), leases, the hub link, the watcher, the ledger fold (Board)
+daemon/sankofa-cli     the command, `sankofa`: one native binary on Linux, macOS and Windows
 daemon/sankofad        the daemon, the per-edit gate, the hub (also sankofa-hub)
 daemon/sankofa-mcp     the MCP server (a binary of its own, so the gate stays small)
 daemon/sankofa-tui     the dashboard in the terminal (Terminal.Gui)
 daemon/sankofa-gui     the dashboard in a window (Avalonia), Windows, macOS, Linux
 systemd/               the user units; install.sh and the packages install them
-packaging/             arch/ (PKGBUILD), deb/ (build.sh), linux/ (the launcher entry)
+packaging/             arch/ (PKGBUILD), deb/ (build.sh), linux/ (the launcher entry), SETUP-windows.txt
 tests/<iteration>/     shell tests per iteration, xUnit tests under tests/0.3, fixtures/
 sim/                   the simulations: a week of use in minutes, against the real code
 docs/                  everything below
@@ -25,17 +27,21 @@ docs/                  everything below
 ## Build and test
 
 ```sh
-make build              # bin/out/{sankofad,sankofa-mcp,sankofa-hub,sankofa-tui,sankofa-gui}: Native AOT, this machine's Linux
+make build              # bin/out/{sankofa,sankofad,sankofa-mcp,sankofa-hub,sankofa-tui,sankofa-gui}: Native AOT for this machine
+make build RID=osx-x64  # another .NET runtime id (same system, other architecture; a Windows RID from here is self-contained, not AOT)
 make test               # builds, then every shell test twice (local ledger, then through sankofad) and the xUnit tests
-make dist               # dist/sankofa-linux-<arch>.tar.gz and dist/sankofa_<version>_<arch>.deb (tests/repo/test_dist.sh checks them)
-make gui-dist           # the window for Windows, macOS and Linux arm64, one zip each
+make dist               # Linux: dist/sankofa-linux-<arch>.tar.gz and dist/sankofa_<version>_<arch>.deb; macOS: dist/sankofa-macos-<arch>.tar.gz
+make dist-windows RID=win-x64   # dist/sankofa-windows-x64.zip (self-contained from here; the release builds it as Native AOT on Windows)
+make gui-dist GUI_RIDS=...      # the window alone for a platform without a full package (none today)
 make bench              # sankofad startup and ask latency
 ./install.sh            # from this checkout: links ~/.local/bin, hooks, services, MCP registration
 ```
 
-Needs the .NET 10 SDK, clang (Native AOT), jq, git, sqlite, inotify-tools,
-libnotify; the tests also use tmux and python3. `.github/workflows/ci.yml`
-runs `make test` on every push and pull request.
+Needs the .NET 10 SDK, a C toolchain for Native AOT (clang on Linux, the Xcode
+command line tools on macOS, the Visual Studio C++ tools on Windows), git and
+sqlite; the shell tests also use jq, tmux and python3. `.github/workflows/ci.yml`
+runs `make test` on Linux and macOS and, on Windows, the xUnit tests plus
+`tests/0.14/smoke.ps1` on every push and pull request.
 
 ## Rules
 
@@ -52,13 +58,25 @@ runs `make test` on every push and pull request.
 
 ## Cutting a release
 
-1. Set the version in `bin/sankofa` (`VERSION=`) and `packaging/arch/PKGBUILD`
-   (`pkgver=`), write the iteration's outcome in `ROADMAP.md`, commit.
+1. Set the version in `daemon/Sankofa.Core/Store.cs` (`Version`) and
+   `packaging/arch/PKGBUILD` (`pkgver=`), write the iteration's outcome in
+   `ROADMAP.md`, commit.
 2. Tag and push: `git tag v1.2.3 && git push origin main v1.2.3`.
-3. `.github/workflows/release.yml` builds on Linux x64 and arm64 (tarball and
-   .deb each, checked with dpkg and `test_dist.sh`), builds the window for
-   the other platforms, and publishes a GitHub Release with the files and an
-   install table. The one-line installer (`get.sh`) and the links in
+3. `.github/workflows/release.yml` stamps the tag's number into the build
+   (`.github/version.sh`) and builds on three runners: Linux x64 and arm64
+   (tarball and .deb each, checked with dpkg and `test_dist.sh`), macOS
+   (Apple silicon as Native AOT, Intel cross-built, tarballs checked with
+   `test_dist.sh`), Windows (x64 as Native AOT, Arm self-contained, zips).
+   Then it publishes a GitHub Release with these files and an install table:
+
+   ```
+   sankofa-linux-x64.tar.gz      sankofa-linux-arm64.tar.gz
+   sankofa_<v>_amd64.deb         sankofa_<v>_arm64.deb
+   sankofa-macos-arm64.tar.gz    sankofa-macos-x64.tar.gz
+   sankofa-windows-x64.zip       sankofa-windows-arm64.zip
+   ```
+
+   The one-line installer (`get.sh`, Linux and macOS) and the links in
    `INSTALL.md` point at the latest release.
 
 Run the workflow by hand (Actions, "release", Run workflow) to build the

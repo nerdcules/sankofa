@@ -1,10 +1,13 @@
+# make test on the three systems sankofa ships for. Linux runs everything; macOS runs the same
+# shell suite (sh, jq, git, python3, tmux); Windows runs the xUnit tests and a PowerShell smoke
+# test of the command and the daemon (tests/0.14/smoke.ps1).
 name: ci
 on:
   push:
     branches: [main]
   pull_request:
 jobs:
-  test:
+  linux:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
@@ -17,3 +20,26 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clang zlib1g-dev jq git inotify-tools libnotify-bin tmux fontconfig libfontconfig1 python3
       - run: make test
+  macos:
+    runs-on: macos-14
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - run: brew install jq tmux
+      - run: make test
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - run: dotnet test tests/0.3/Sankofa.Tests --nologo -v quiet
+      - run: ./tests/0.14/smoke.ps1

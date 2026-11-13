@@ -13,14 +13,16 @@ with one command.
 
 ## Get it
 
-Linux, one line:
+Linux and macOS, one line:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/nerdcules/sankofa/main/get.sh | sh
 ```
 
-Also as a `.deb`, a tarball, an Arch package, or from source, and the window
-for Windows and macOS: [docs/INSTALL.md](docs/INSTALL.md).
+Windows: unzip the package, add it to PATH, run `sankofa setup`. Also as a
+`.deb`, a tarball, an Arch package, or from source: [docs/INSTALL.md](docs/INSTALL.md).
+Every package holds the same programs, so a Linux desktop, a Mac and a Windows
+machine share one ledger and hand branches to each other.
 
 ## Sixty seconds
 
@@ -91,6 +93,7 @@ of use in minutes ([docs/ROADMAP.md](docs/ROADMAP.md)):
 
 ## Status
 
-Iteration 0.13. The daemon, hooks and gates run on Linux; the window runs on
-Windows, macOS and Linux and reads a ledger. A Mac port of the daemon is
-[the next big item](https://github.com/nerdcules/sankofa/issues). MIT licence.
+Iteration 0.14. Everything runs on Linux, macOS and Windows: the command, the
+daemon and its gates, the MCP server, the hub, the notifier, and the dashboards
+in the terminal and in a window. The same code on every system, so any of them
+shares a ledger, a hub and a git remote with any other. MIT licence.

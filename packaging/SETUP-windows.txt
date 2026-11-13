@@ -1,0 +1,23 @@
+sankofa on Windows
+
+1. Unzip this folder somewhere it can stay, for example C:\Users\you\sankofa.
+2. Add that folder to your PATH (Settings > System > About > Advanced system
+   settings > Environment Variables, or in PowerShell:
+     [Environment]::SetEnvironmentVariable("Path", $env:Path + ";C:\Users\you\sankofa", "User")
+   then open a new terminal).
+3. Run:  sankofa setup
+   It adds the Stop, SubagentStop, SessionEnd and edit-gate hooks to
+   %USERPROFILE%\.claude\settings.json (a backup is kept beside it), registers
+   the MCP server with Claude Code and Codex when they are installed, and
+   creates two scheduled tasks that start at logon: sankofad (the daemon) and
+   sankofa watch serve (the desktop notifier).
+4. In each repository that should keep a ledger:
+     sankofa init
+     sankofa watch add
+     sankofa gate install
+
+Windows SmartScreen may say the programs are unrecognised the first time:
+"More info", then "Run anyway". They are not signed.
+
+Everything else, and the same ledger shared with Linux and macOS machines
+through a hub or a git remote: https://github.com/nerdcules/sankofa

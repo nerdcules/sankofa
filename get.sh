@@ -1,17 +1,23 @@
 #!/bin/sh
-# Gets the latest sankofa release for this Linux machine and installs it:
+# Gets the latest sankofa release for this machine (Linux or macOS) and installs it:
 #   curl -fsSL https://raw.githubusercontent.com/nerdcules/sankofa/main/get.sh | sh
 # The tarball is unpacked under ~/.local/share/sankofa/<version> ("current" points at it) and
 # its install.sh links the commands into ~/.local/bin, wires the Claude Code hooks and the user
-# services, and registers the MCP server. Run it again to upgrade. Arguments go to install.sh
-# (--hub). Env: SANKOFA_URL (another tarball; file:// works), SANKOFA_HOME (another folder).
+# services (systemd on Linux, launchd on macOS), and registers the MCP server. Run it again to
+# upgrade. Arguments go to install.sh (--hub). Env: SANKOFA_URL (another tarball; file:// works),
+# SANKOFA_HOME (another folder). On Windows: download sankofa-windows-<arch>.zip from the
+# releases page, unzip it, add the folder to PATH, run `sankofa setup`.
 set -eu
-case $(uname -s) in Linux) ;; *) echo "get: the daemon and hooks run on Linux today. On macOS and Windows get the window (sankofa-gui) from https://github.com/nerdcules/sankofa/releases" >&2; exit 1 ;; esac
+case $(uname -s) in
+  Linux) os=linux ;;
+  Darwin) os=macos ;;
+  *) echo "get: on Windows, download sankofa-windows-x64.zip (or -arm64) from https://github.com/nerdcules/sankofa/releases, unzip it, add the folder to PATH and run: sankofa setup" >&2; exit 1 ;;
+esac
 case $(uname -m) in x86_64) arch=x64 ;; aarch64|arm64) arch=arm64 ;; *) echo "get: no build for $(uname -m)" >&2; exit 1 ;; esac
-url=${SANKOFA_URL:-https://github.com/nerdcules/sankofa/releases/latest/download/sankofa-linux-$arch.tar.gz}
+url=${SANKOFA_URL:-https://github.com/nerdcules/sankofa/releases/latest/download/sankofa-$os-$arch.tar.gz}
 home=${SANKOFA_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/sankofa}
 command -v curl >/dev/null || { echo "get: curl is required" >&2; exit 1; }
-command -v jq >/dev/null || echo "get: sankofa needs jq; install it with your package manager" >&2
+command -v git >/dev/null || echo "get: sankofa needs git; install it with your package manager" >&2
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 echo "get: $url"

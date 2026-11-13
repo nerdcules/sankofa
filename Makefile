@@ -1,60 +1,92 @@
-.PHONY: build test test-shell test-shell-daemon test-dotnet dist gui-dist bench clean
-# the version stamped into a release (make dist VERSION=1.2.3); default: the CLI's own
-VERSION ?= $(shell sed -n 's/^VERSION=//p' bin/sankofa)
-# the machine this is built on, x64 or arm64; the .NET runtime id follows
+.PHONY: build test test-shell test-shell-daemon test-dotnet dist dist-windows gui-dist bench clean
+# the version stamped into a release (make dist VERSION=1.2.3); default: the one compiled in
+VERSION ?= $(shell sed -n 's/.*const string Version = "\([^"]*\)".*/\1/p' daemon/Sankofa.Core/Store.cs)
+# the machine this is built on: x64 or arm64, Linux or macOS; the .NET runtime id follows
 ARCH ?= $(shell uname -m | sed 's/x86_64/x64/; s/aarch64/arm64/')
-RID ?= linux-$(ARCH)
+OS := $(shell uname -s)
+ifeq ($(OS),Darwin)
+PLAT ?= osx
+PKG ?= macos
+else
+PLAT ?= linux
+PKG ?= linux
+endif
+RID ?= $(PLAT)-$(ARCH)
 DISTDIR ?= dist
-DAEMON := bin/out/sankofad
+# GNU tar and bsdtar (macOS) spell "owned by root" differently
+TAROWN := $(shell tar --version 2>/dev/null | grep -q GNU && echo "--owner=0 --group=0" || echo "--uid 0 --gid 0")
+EXE := $(if $(findstring win-,$(RID)),.exe,)
+DAEMON := bin/out/sankofad$(EXE)
 
-MCP := bin/out/sankofa-mcp
-HUB := bin/out/sankofa-hub
-TUI := bin/out/sankofa-tui
-GUI := bin/out/sankofa-gui
-CLI := bin/out/sankofa
+MCP := bin/out/sankofa-mcp$(EXE)
+HUB := bin/out/sankofa-hub$(EXE)
+TUI := bin/out/sankofa-tui$(EXE)
+GUI := bin/out/sankofa-gui$(EXE)
+CLI := bin/out/sankofa$(EXE)
 SOURCES := $(shell find daemon -name '*.cs' -o -name '*.csproj' -o -name '*.props' | grep -v /obj/ | grep -v /bin/)
+# Native AOT needs the host's own toolchain: a Windows build from Linux or macOS is self-contained instead
+AOT := $(if $(findstring win-,$(RID)),$(if $(findstring MINGW,$(OS)),,-p:PublishAot=false --self-contained),)
+PUBLISH = dotnet publish $(1) -c Release -r $(RID) $(AOT) -o bin/out --nologo -v quiet
 
 build: $(DAEMON) $(MCP) $(HUB) $(TUI) $(GUI) $(CLI)
 # the command itself (0.14): one native binary on every platform
 $(CLI): $(SOURCES)
-	dotnet publish daemon/sankofa-cli -c Release -r $(RID) -o bin/out --nologo -v quiet
+	$(call PUBLISH,daemon/sankofa-cli)
 	@rm -f bin/out/*.pdb bin/out/*.dbg
 $(DAEMON): $(SOURCES)
-	dotnet publish daemon/sankofad -c Release -r $(RID) -o bin/out --nologo -v quiet
+	$(call PUBLISH,daemon/sankofad)
 	@rm -f bin/out/*.pdb bin/out/*.dbg
 $(MCP): $(SOURCES)
-	dotnet publish daemon/sankofa-mcp -c Release -r $(RID) -o bin/out --nologo -v quiet
+	$(call PUBLISH,daemon/sankofa-mcp)
 	@rm -f bin/out/*.pdb bin/out/*.dbg
 $(HUB): $(SOURCES)
-	dotnet publish daemon/sankofa-hub -c Release -r $(RID) -o bin/out --nologo -v quiet
+	$(call PUBLISH,daemon/sankofa-hub)
 	@rm -f bin/out/*.pdb bin/out/*.dbg
 # Terminal.Gui ships an Oniguruma wrapper for syntax colouring, which the dashboard never uses
 $(TUI): $(SOURCES)
-	dotnet publish daemon/sankofa-tui -c Release -r $(RID) -o bin/out --nologo -v quiet
-	@rm -f bin/out/*.pdb bin/out/*.dbg bin/out/libonigwrap.so
+	$(call PUBLISH,daemon/sankofa-tui)
+	@rm -f bin/out/*.pdb bin/out/*.dbg bin/out/libonigwrap.so bin/out/libonigwrap.dylib bin/out/onigwrap.dll
 # the window (Avalonia): Native AOT here, beside its two native libraries (Skia, HarfBuzz)
 $(GUI): $(SOURCES)
-	dotnet publish daemon/sankofa-gui -c Release -r $(RID) -o bin/out --nologo -v quiet
+	$(call PUBLISH,daemon/sankofa-gui)
 	@rm -f bin/out/*.pdb bin/out/*.dbg
 
-# a release for this machine's Linux: a tarball that installs from wherever it is unpacked
-# (install.sh is inside), and a .deb with the same files under /usr (packaging/deb/build.sh)
-DIST := $(DISTDIR)/sankofa-$(VERSION)-linux-$(ARCH)
+# a release for this machine (Linux or macOS): a tarball that installs from wherever it is
+# unpacked (install.sh is inside), and on Linux a .deb with the same files under /usr
+# (packaging/deb/build.sh). The same folder layout on both, so install.sh is one script.
+DIST := $(DISTDIR)/sankofa-$(VERSION)-$(PKG)-$(ARCH)
 dist: build
 	rm -rf $(DIST) && mkdir -p $(DIST)/bin/out $(DIST)/packaging
 	cp bin/sankofa bin/sankofa-watch $(DIST)/bin/
-	sed -i 's/^VERSION=.*/VERSION=$(VERSION)/' $(DIST)/bin/sankofa
-	cp bin/out/sankofad bin/out/sankofa-mcp bin/out/sankofa-hub bin/out/sankofa-tui $(DIST)/bin/out/
-	cp bin/out/sankofa-gui bin/out/libSkiaSharp.so bin/out/libHarfBuzzSharp.so $(DIST)/bin/out/
-	cp -r hooks systemd docs $(DIST)/ && cp -r packaging/linux $(DIST)/packaging/
+	@[ ! -f bin/sankofa-sh ] || cp bin/sankofa-sh $(DIST)/bin/   # while verbs are still being ported from the shell CLI
+	cp bin/out/sankofa bin/out/sankofad bin/out/sankofa-mcp bin/out/sankofa-hub bin/out/sankofa-tui bin/out/sankofa-gui $(DIST)/bin/out/
+	cp bin/out/libSkiaSharp.* bin/out/libHarfBuzzSharp.* $(DIST)/bin/out/
+	cp -r hooks systemd docs $(DIST)/
+	for d in packaging/linux packaging/launchd; do [ ! -d $$d ] || cp -r $$d $(DIST)/packaging/; done
 	cp install.sh get.sh AGENTS.md LICENSE README.md $(DIST)/
-	tar -C $(DISTDIR) --owner=0 --group=0 -czf $(DISTDIR)/sankofa-linux-$(ARCH).tar.gz sankofa-$(VERSION)-linux-$(ARCH)
-	sh packaging/deb/build.sh $(DIST) $(VERSION) $(ARCH) $(DISTDIR)
-	@ls -1 $(DISTDIR)/sankofa-linux-$(ARCH).tar.gz $(DISTDIR)/sankofa_$(VERSION)_*.deb
+	tar -C $(DISTDIR) $(TAROWN) -czf $(DISTDIR)/sankofa-$(PKG)-$(ARCH).tar.gz sankofa-$(VERSION)-$(PKG)-$(ARCH)
+	@[ "$(PKG)" != linux ] || sh packaging/deb/build.sh $(DIST) $(VERSION) $(ARCH) $(DISTDIR)
+	@ls -1 $(DISTDIR)/sankofa-$(PKG)-$(ARCH).tar.gz $(DISTDIR)/sankofa_$(VERSION)_*.deb 2>/dev/null || true
 
-# the window for the other platforms, built from here: one self-contained file each, zipped
-GUI_RIDS := win-x64 win-arm64 osx-arm64 osx-x64 linux-arm64
+# the Windows package: every program with its dlls (e_sqlite3.dll among them), the hooks and a
+# SETUP.txt, zipped. From Linux or macOS the binaries are self-contained (no Native AOT across
+# systems); the release workflow builds them as Native AOT on a Windows runner with the same layout.
+#   make dist-windows RID=win-x64      make dist-windows RID=win-arm64
+WARCH := $(subst win-,,$(RID))
+WDIST := $(DISTDIR)/sankofa-$(VERSION)-windows-$(WARCH)
+dist-windows:
+	@case "$(RID)" in win-*) ;; *) echo "dist-windows needs RID=win-x64 or RID=win-arm64" >&2; exit 1 ;; esac
+	rm -rf bin/out $(WDIST)
+	$(MAKE) build RID=$(RID)
+	mkdir -p $(WDIST) && cp bin/out/*.exe $(WDIST)/ && (cp bin/out/*.dll $(WDIST)/ 2>/dev/null || true)
+	cp -r hooks $(WDIST)/ && cp AGENTS.md LICENSE README.md packaging/SETUP-windows.txt $(WDIST)/ && mv $(WDIST)/SETUP-windows.txt $(WDIST)/SETUP.txt
+	(cd $(DISTDIR) && rm -f sankofa-windows-$(WARCH).zip && zip -qr sankofa-windows-$(WARCH).zip sankofa-$(VERSION)-windows-$(WARCH))
+	@echo "$(DISTDIR)/sankofa-windows-$(WARCH).zip"
+
+# the window alone, for a platform the full packages do not cover (none today: pass GUI_RIDS=...)
+GUI_RIDS ?=
 gui-dist:
+	@[ -n "$(GUI_RIDS)" ] || { echo "gui-dist: every platform has a full package now; pass GUI_RIDS=<rid> for the window alone"; exit 0; }
 	@for rid in $(GUI_RIDS); do \
 	  dotnet publish daemon/sankofa-gui -c Release -r $$rid -p:PublishAot=false -p:PublishSingleFile=true \
 	    -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true --self-contained \

@@ -1,5 +1,7 @@
-# Builds the release packages. On a tag (v1.2.3) it also publishes them as a GitHub Release;
-# run by hand (workflow_dispatch) it only builds and keeps them as workflow artifacts.
+# Builds the release packages for Linux, macOS and Windows. On a tag (v1.2.3) it also publishes
+# them as a GitHub Release; run by hand (workflow_dispatch) it only builds and keeps them as
+# workflow artifacts. Every package holds the same programs built from the same code, so any
+# of them shares a ledger, a hub and a git remote with any other.
 name: release
 on:
   push:
@@ -24,10 +26,9 @@ jobs:
       - run: |
           sudo apt-get update
           sudo apt-get install -y clang zlib1g-dev jq git
-      - name: version from the tag, else from the CLI
+      - name: version from the tag, stamped into the build
         id: v
-        run: |
-          case "$GITHUB_REF" in refs/tags/v*) echo "version=${GITHUB_REF_NAME#v}" ;; *) echo "version=$(sed -n 's/^VERSION=//p' bin/sankofa)" ;; esac >> "$GITHUB_OUTPUT"
+        run: sh .github/version.sh >> "$GITHUB_OUTPUT"
       - run: make dist VERSION=${{ steps.v.outputs.version }} ARCH=${{ matrix.arch }}
       - name: the .deb as dpkg sees it
         run: |
@@ -41,22 +42,82 @@ jobs:
           path: |
             dist/sankofa-linux-*.tar.gz
             dist/sankofa_*.deb
-  window:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 40
+  macos:
+    runs-on: macos-14
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
-      - run: sudo apt-get update && sudo apt-get install -y zip
-      - run: make gui-dist
+      - run: brew install jq
+      - name: version from the tag, stamped into the build
+        id: v
+        run: sh .github/version.sh >> "$GITHUB_OUTPUT"
+      - name: Apple silicon, Native AOT
+        run: make dist VERSION=${{ steps.v.outputs.version }} ARCH=arm64
+      - name: the tarball installs from where it is unpacked
+        run: sh tests/repo/test_dist.sh
+      - name: Intel, cross-built from the same runner
+        run: |
+          rm -rf bin/out
+          make dist VERSION=${{ steps.v.outputs.version }} ARCH=x64 RID=osx-x64
+      - run: ls -la dist
       - uses: actions/upload-artifact@v4
         with:
-          name: window
-          path: dist/sankofa-gui-*.zip
+          name: macos
+          path: dist/sankofa-macos-*.tar.gz
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: version from the tag, stamped into the build
+        id: v
+        run: |
+          $v = if ($env:GITHUB_REF -like 'refs/tags/v*') { $env:GITHUB_REF_NAME.Substring(1) } else { (Select-String -Path daemon/Sankofa.Core/Store.cs -Pattern 'const string Version = "([^"]*)"').Matches[0].Groups[1].Value }
+          (Get-Content daemon/Sankofa.Core/Store.cs) -replace 'const string Version = "[^"]*"', "const string Version = `"$v`"" | Set-Content daemon/Sankofa.Core/Store.cs
+          "version=$v" >> $env:GITHUB_OUTPUT
+      - name: x64 as Native AOT, arm64 self-contained
+        run: |
+          $v = '${{ steps.v.outputs.version }}'
+          $projects = 'sankofa-cli', 'sankofad', 'sankofa-mcp', 'sankofa-hub', 'sankofa-tui', 'sankofa-gui'
+          foreach ($pair in @(@('x64', 'win-x64', ''), @('arm64', 'win-arm64', '-p:PublishAot=false --self-contained'))) {
+            $arch, $rid, $extra = $pair
+            $out = "dist/sankofa-$v-windows-$arch"
+            New-Item -ItemType Directory -Force $out | Out-Null
+            foreach ($p in $projects) {
+              $args = @('publish', "daemon/$p", '-c', 'Release', '-r', $rid, '-o', "$out", '--nologo', '-v', 'quiet')
+              if ($extra) { $args += $extra.Split(' ') }
+              & dotnet @args
+              if ($LASTEXITCODE -ne 0) { throw "publish $p for $rid failed" }
+            }
+            Remove-Item "$out/*.pdb" -ErrorAction SilentlyContinue
+            Copy-Item -Recurse hooks "$out/hooks"
+            Copy-Item AGENTS.md, LICENSE, README.md $out
+            Copy-Item packaging/SETUP-windows.txt "$out/SETUP.txt"
+            Get-ChildItem $out | Select-Object Name, Length | Format-Table | Out-String | Write-Host
+            Compress-Archive -Path $out -DestinationPath "dist/sankofa-windows-$arch.zip" -Force
+          }
+      - name: the x64 programs answer
+        run: |
+          $v = '${{ steps.v.outputs.version }}'
+          $out = "dist/sankofa-$v-windows-x64"
+          & "$out/sankofa.exe" version
+          & "$out/sankofad.exe" version
+          & "$out/sankofa-gui.exe" version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/sankofa-windows-*.zip
   publish:
-    needs: [linux, window]
+    needs: [linux, macos, windows]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     steps:
@@ -71,22 +132,27 @@ jobs:
           {
             echo "## Get it"
             echo
-            echo "See [docs/INSTALL.md](https://github.com/nerdcules/sankofa/blob/$GITHUB_REF_NAME/docs/INSTALL.md) for what each file is and what the install does."
+            echo "See [docs/INSTALL.md](https://github.com/nerdcules/sankofa/blob/$GITHUB_REF_NAME/docs/INSTALL.md) for what each file is and what the install does. Every package holds the same programs, so machines on different systems share one ledger, one hub and one git remote."
             echo
-            echo '| Linux | | '
+            echo '| Linux | |'
             echo '|---|---|'
             echo "| one line | \`curl -fsSL https://raw.githubusercontent.com/nerdcules/sankofa/main/get.sh \| sh\` |"
-            echo "| Debian, Ubuntu (x64) | sankofa_${v}_amd64.deb, then \`sankofa setup\` |"
-            echo "| Debian, Ubuntu (arm64) | sankofa_${v}_arm64.deb, then \`sankofa setup\` |"
-            echo "| any Linux (x64) | sankofa-linux-x64.tar.gz: unpack, run install.sh |"
-            echo "| any Linux (arm64) | sankofa-linux-arm64.tar.gz: unpack, run install.sh |"
+            echo "| Debian, Ubuntu, x64 | sankofa_${v}_amd64.deb, then \`sankofa setup\` |"
+            echo "| Debian, Ubuntu, arm64 | sankofa_${v}_arm64.deb, then \`sankofa setup\` |"
+            echo "| any Linux, x64 | sankofa-linux-x64.tar.gz: unpack, run install.sh |"
+            echo "| any Linux, arm64 | sankofa-linux-arm64.tar.gz: unpack, run install.sh |"
             echo "| Arch | \`cd packaging/arch && makepkg -si\` from the source |"
             echo
-            echo '| The window only (reads a ledger; the daemon and hooks are Linux) | |'
+            echo '| macOS | |'
             echo '|---|---|'
-            echo '| Windows | sankofa-gui-win-x64.zip, sankofa-gui-win-arm64.zip |'
-            echo '| macOS | sankofa-gui-osx-arm64.zip (Apple silicon), sankofa-gui-osx-x64.zip |'
-            echo '| Linux arm64 | sankofa-gui-linux-arm64.zip |'
+            echo "| one line | the same \`curl ... get.sh \| sh\` |"
+            echo "| Apple silicon | sankofa-macos-arm64.tar.gz: unpack, run install.sh |"
+            echo "| Intel | sankofa-macos-x64.tar.gz: unpack, run install.sh |"
+            echo
+            echo '| Windows | |'
+            echo '|---|---|'
+            echo "| x64 | sankofa-windows-x64.zip: unzip, add to PATH, \`sankofa setup\` |"
+            echo "| Arm | sankofa-windows-arm64.zip: the same |"
             echo
             echo "## What changed"
             echo

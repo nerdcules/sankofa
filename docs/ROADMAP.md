@@ -480,3 +480,37 @@ about 6 ms where this machine does 4, so the latency budgets double under
 because of a global `push.autoSetupRemote`. The shell suite now also passes
 with the global git config disabled. README: 432 lines to 96; the rest moved
 to `GUIDE.md` and `DEVELOPING.md`.
+
+## 0.14 · everywhere
+
+Deliver: every part of sankofa on Linux, macOS and Windows, as counterpart
+packages that mix and match. The command becomes one native binary
+(`daemon/sankofa-cli`, replacing the POSIX shell CLI and its jq), so Windows
+has it without a shell and every system runs the same code. The daemon's
+Linux-only pieces get counterparts: the file watcher (inotify, FSEvents,
+ReadDirectoryChangesW), the ledger lock, the SQLite library beside the binary
+on Windows, the socket's default place. The notifier is `sankofa watch
+serve`, with the system's own toasts. Services: systemd user units, launchd
+agents written by `install.sh`, scheduled tasks created by `sankofa setup`.
+Packages: tarball and `.deb` for Linux x64 and arm64, tarball for macOS
+Apple silicon and Intel, zip for Windows x64 and Arm, all built and published
+by the release workflow; `get.sh` serves Linux and macOS. CI on three runners.
+
+The claim this makes: any system's sankofa shares a ledger, a hub and a git
+remote with any other's, because every binary is the same code reading the
+same files and speaking the same protocol. Ledger lines are JSON with `\n`
+endings and repo-relative paths with forward slashes on every system.
+
+Tests: the shell suite under `tests/` on Linux and macOS (`make test`), the
+xUnit tests and `tests/0.14/smoke.ps1` on Windows (the command and the daemon
+on a Unix socket under a temp folder: init, todo, awaiting, open, claim, ask
+says held, done, daemon answers); `tests/repo/test_dist.sh` on Linux and macOS
+(the tarball installs from where it is unpacked; the `.deb` on Linux); the
+release workflow runs the Windows programs it built (`version`) before
+packaging them.
+
+Exit: a handoff made on a Mac picked up on Windows through a Linux hub, with
+leases and toasts seen on all three. In CI if the runners can reach one
+another (they cannot today: one hub in a container on Linux with two more
+devices simulated there is the fallback, `sim/hub.py --docker`), else by hand
+on three real machines, written up here.
