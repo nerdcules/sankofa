@@ -76,14 +76,22 @@ public static partial class LedgerLock
     [LibraryImport("libc")] private static partial int close(int fd);
     const int O_RDWR = 2, LOCK_EX = 2, EINTR = 4;
     // open(2) flags differ between the two kernels
-    static readonly int O_CREAT = OperatingSystem.IsMacOS() ? 0x200 : 0x40;
     static readonly int O_CLOEXEC = OperatingSystem.IsMacOS() ? 0x1000000 : 0x80000;
 
     public static IDisposable Acquire(string sankofaDir)
     {
         var path = Path.Combine(sankofaDir, "ledger.lock");
         if (OperatingSystem.IsWindows()) return AcquireShared(path);
-        int fd = open(path, O_RDWR | O_CREAT | O_CLOEXEC, 0b110_100_100);
+        // open(2) is variadic, and on arm64 macOS the mode would not reach it (variadic arguments
+        // travel on the stack there): the file was created with no permissions and the next open
+        // failed with EACCES. So the file is created by .NET (closed at once, lock released), and
+        // open(2) is called without O_CREAT, where the mode is never read.
+        if (!File.Exists(path))
+        {
+            try { using var _ = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.ReadWrite); }
+            catch (IOException) { }
+        }
+        int fd = open(path, O_RDWR | O_CLOEXEC, 0);
         if (fd < 0) throw new IOException($"cannot open {path} (errno {Marshal.GetLastPInvokeError()})");
         while (flock(fd, LOCK_EX) != 0)
             if (Marshal.GetLastPInvokeError() != EINTR) { close(fd); throw new IOException($"cannot lock {path}"); }
