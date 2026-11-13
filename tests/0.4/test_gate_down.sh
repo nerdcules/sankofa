@@ -3,11 +3,12 @@
 . "$(dirname "$0")/lib.sh"
 $S init >/dev/null
 start_daemon; stop_daemon   # leaves no socket: unreachable
+lim=1; [ "${CI:-}" = true ] && [ "$(uname -s)" = Darwin ] && lim=3   # a macOS runner spends 40 ms starting a process
 t0=$(now_ns)
 gate claude-code "$(edit_json A "$PWD/src/a.c")"
 ms=$(( ($(now_ns) - t0) / 1000000 ))
 assert_eq "$RC$OUT" 0 "edit allowed"
-[ "$ms" -lt 100 ] || fail "unreachable daemon took ${ms} ms"
+[ "$ms" -lt $((100 * lim)) ] || fail "unreachable daemon took ${ms} ms"
 gate claude-code "$(edit_json A "$PWD/src/a.c")"
 assert_eq "$(jq -r 'select(.type=="flag") | .text' .sankofa/ledger.jsonl)" \
   "edit of src/a.c by A [main] not leased: sankofad unreachable" "exactly one flag for repeated edits"
@@ -19,7 +20,7 @@ t0=$(now_ns)
 SANKOFA_SOCKET="$TD/hang.sock" gate claude-code "$(edit_json A "$PWD/src/b.c")"
 ms=$(( ($(now_ns) - t0) / 1000000 ))
 assert_eq "$RC$OUT" 0 "hung daemon: edit allowed"
-[ "$ms" -lt 150 ] || fail "hung daemon took ${ms} ms"
+[ "$ms" -lt $((150 * lim)) ] || fail "hung daemon took ${ms} ms"
 assert_contains "$(tail -n1 .sankofa/ledger.jsonl)" "src/b.c by A [main] not leased" "hung daemon flagged"
 
 start_daemon

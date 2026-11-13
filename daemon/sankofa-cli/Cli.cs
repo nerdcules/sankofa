@@ -25,7 +25,7 @@ public sealed class Ctx
     /// <summary>The nearest .sankofa/ at or above the working directory, else die.</summary>
     public static Ctx Need()
     {
-        var root = Defaults.FindRoot(Directory.GetCurrentDirectory())
+        var root = Defaults.FindRoot(Defaults.Canonical(Directory.GetCurrentDirectory()))
             ?? throw new Exit("no .sankofa/ here or above; run 'sankofa init' in the repo root");
         var c = new Ctx(root);
         if (!File.Exists(c.Ledger)) File.WriteAllText(c.Ledger, "");
@@ -35,7 +35,7 @@ public sealed class Ctx
     /// <summary>The same, or null outside a repo (hooks are silent no-ops there).</summary>
     public static Ctx? Find()
     {
-        var root = Defaults.FindRoot(Directory.GetCurrentDirectory());
+        var root = Defaults.FindRoot(Defaults.Canonical(Directory.GetCurrentDirectory()));
         if (root is null) return null;
         var c = new Ctx(root);
         if (!File.Exists(c.Ledger)) File.WriteAllText(c.Ledger, "");
@@ -61,12 +61,12 @@ public sealed class Ctx
         string rel;
         if (Path.IsPathRooted(p))
         {
-            var full = Path.GetFullPath(p);
+            var full = Defaults.Canonical(p);
             rel = full.StartsWith(Root, StringComparison.Ordinal) ? full[Root.Length..].TrimStart('/', '\\') : full;
         }
         else
         {
-            var here = Directory.GetCurrentDirectory();
+            var here = Defaults.Canonical(Directory.GetCurrentDirectory());
             var sub = here.StartsWith(Root, StringComparison.Ordinal) ? here[Root.Length..].TrimStart('/', '\\') : "";
             rel = sub.Length > 0 ? sub + "/" + p : p;
         }

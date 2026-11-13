@@ -65,6 +65,7 @@ static class Gate
         if (intent is null) return 0;
 
         var byRepo = intent.Paths
+            .Select(Defaults.Canonical)
             .Select(p => (Path: p, Root: Defaults.FindRoot(Path.GetDirectoryName(p) ?? "/")))
             .Where(x => x.Root is not null && !Off(x.Root))
             .GroupBy(x => x.Root!);
