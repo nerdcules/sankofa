@@ -43,12 +43,12 @@ pg=$(ps -o pgid= -p $$ | tr -d ' ')
 at=no; [ "$n" = "${CRASH_AT:-0}" ] && at=yes
 # a call that talks to the remote, for the network failures
 net=no; case " $* " in *" push "*|*" fetch "*|*" ls-remote "*) net=yes ;; esac
-[ $at = yes ] && [ "$CRASH_WHEN" = before ] && kill -9 -- "-$pg"
+[ $at = yes ] && [ "$CRASH_WHEN" = before ] && kill -9 "-$pg"
 if [ $at = yes ] && [ $net = yes ] && [ "$CRASH_WHEN" = fail-before ]; then
   echo "$n NETFAIL" >> "$CRASH_COUNT.log"; echo "fatal: unable to access remote: Connection timed out" >&2; exit 128
 fi
 "$REAL" "$@"; rc=$?
-[ $at = yes ] && [ "$CRASH_WHEN" = after ] && kill -9 -- "-$pg"
+[ $at = yes ] && [ "$CRASH_WHEN" = after ] && kill -9 "-$pg"
 if [ $at = yes ] && [ $net = yes ] && [ "$CRASH_WHEN" = fail-after ]; then
   # the remote did it, the answer never arrived
   echo "$n NETFAIL" >> "$CRASH_COUNT.log"; echo "fatal: the remote end hung up unexpectedly" >&2; exit 128
