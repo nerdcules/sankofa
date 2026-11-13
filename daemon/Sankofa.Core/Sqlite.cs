@@ -27,7 +27,7 @@ internal static partial class Native
     /// <summary>Library names to try, most specific first.</summary>
     public static IEnumerable<string> Candidates()
     {
-        if (OperatingSystem.IsWindows()) return ["e_sqlite3", "sqlite3", "winsqlite3"];
+        if (OperatingSystem.IsWindows()) return ["e_sqlite3", "winsqlite3"];   // never a bare sqlite3.dll: a Python or Perl install on PATH has one that crashed the tests
         if (OperatingSystem.IsMacOS()) return ["libsqlite3.dylib", "/usr/lib/libsqlite3.dylib", "libsqlite3"];
         return ["libsqlite3.so.0", "libsqlite3.so", "libsqlite3"];
     }
