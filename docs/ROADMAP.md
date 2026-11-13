@@ -466,3 +466,17 @@ workflow runs it on x64 and arm64 and inspects the `.deb` with dpkg.
 
 Exit: a release on GitHub that a stranger installs on a clean machine with one
 line, and runs the sixty seconds in the README. Then the Mac port.
+
+Outcome (0.13.0, 2026-11-13): `make dist` builds the tarball and the `.deb`
+(with `ar` and `tar` alone, so any Linux can build it; dpkg reads it);
+`tests/repo/test_dist.sh` covers both, `get.sh`, `--packaged` and `sankofa
+setup`. The release workflow built x64 and arm64 and the window for Windows,
+macOS and Linux arm64 on its first run. The first `make test` on a GitHub
+runner found three things this machine had hidden: dash's `kill` takes no
+`--`, so the crash test's shim killed nothing on Ubuntu (now `kill -9 -pgid`
+in the test and `sim/crash.py`); a shared runner measures the edit gate at
+about 6 ms where this machine does 4, so the latency budgets double under
+`CI=true`; and the bridge test pushed with no refspec and passed here only
+because of a global `push.autoSetupRemote`. The shell suite now also passes
+with the global git config disabled. README: 432 lines to 96; the rest moved
+to `GUIDE.md` and `DEVELOPING.md`.
