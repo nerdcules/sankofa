@@ -119,11 +119,22 @@ static partial class SiblingExec
 
     public static int Run(string name, string[] rest)
     {
+        var exe = OperatingSystem.IsWindows() ? name + ".exe" : name;
         var self = Environment.ProcessPath is { } p ? new FileInfo(p).ResolveLinkTarget(true)?.FullName ?? p : "";
-        var sibling = Path.Combine(Path.GetDirectoryName(self) ?? ".", name);
+        var sibling = Path.Combine(Path.GetDirectoryName(self) ?? ".", exe);
         var target = File.Exists(sibling) ? sibling
-                   : (Environment.GetEnvironmentVariable("PATH") ?? "").Split(':').Select(d => Path.Combine(d, name)).FirstOrDefault(File.Exists);
+                   : (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator).Select(d => Path.Combine(d, exe)).FirstOrDefault(File.Exists);
         if (target is null) { Console.Error.WriteLine($"sankofad: {name} not found next to sankofad or on PATH"); return 1; }
+        if (OperatingSystem.IsWindows())
+        {
+            // no execv there: the sibling runs as a child with this process's stdio
+            var psi = new ProcessStartInfo(target) { UseShellExecute = false };
+            foreach (var a in rest) psi.ArgumentList.Add(a);
+            using var child = Process.Start(psi);
+            if (child is null) { Console.Error.WriteLine($"sankofad: could not run {target}"); return 1; }
+            child.WaitForExit();
+            return child.ExitCode;
+        }
         execv(target, [target, .. rest, null]);
         Console.Error.WriteLine($"sankofad: could not run {target} (errno {System.Runtime.InteropServices.Marshal.GetLastPInvokeError()})");
         return 1;

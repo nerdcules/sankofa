@@ -1,8 +1,5 @@
 <Project>
-  <!-- sankofa runs on Linux (Unix sockets, systemd, libsqlite3). -->
-  <ItemGroup>
-    <AssemblyAttribute Include="System.Runtime.Versioning.SupportedOSPlatformAttribute">
-      <_Parameter1>linux</_Parameter1>
-    </AssemblyAttribute>
-  </ItemGroup>
+  <!-- sankofa builds for Linux, macOS and Windows from one source (0.14). Platform-specific calls
+       (Unix file modes, flock, inotify, execv) are guarded by OperatingSystem.Is*() at each call
+       site; CA1416 stays on so an unguarded one fails the build. -->
 </Project>
