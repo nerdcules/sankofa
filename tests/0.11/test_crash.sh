@@ -10,7 +10,7 @@ mkdir "$T/shim"; REAL=$(command -v git)
 cat > "$T/shim/git" <<SH
 #!/bin/sh
 "$REAL" "\$@"; rc=\$?
-case " \$* " in *"\$CRASH_MATCH"*) kill -9 -- "-\$(ps -o pgid= -p \$\$ | tr -d ' ')" ;; esac
+case " \$* " in *"\$CRASH_MATCH"*) kill -9 "-\$(ps -o pgid= -p \$\$ | tr -d ' ')" ;; esac
 exit \$rc
 SH
 chmod +x "$T/shim/git"
