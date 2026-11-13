@@ -1,0 +1,83 @@
+<svg color="#1B2430" font-family="'IBM Plex Sans','Segoe UI',system-ui,sans-serif" viewBox="0 0 1000 480" role="img" aria-label="Where each tool checks an edit along the path from claiming a task to pushing. Most check before the write and only if the agent asks. MCP Agent Mail also guards the commit. sankofa refuses at the write and at the commit, and detects overlap after a push or fetch." xmlns="http://www.w3.org/2000/svg">
+<rect width="100%" height="100%" fill="#F5F7FA"/>
+<style>.mono { font-family:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,monospace; }</style>
+  <defs>
+    <marker id="b1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1B2430"/>
+    </marker>
+  </defs>
+
+  <text x="30" y="40" font-size="17" font-weight="600" fill="#1B2430">Where the check sits</text>
+  <text x="30" y="60" font-size="12" fill="#5E6B7A">One edit, left to right. A check that runs only when the agent asks cannot hold an agent that forgets to ask.</text>
+
+  <!-- Timeline -->
+  <line x1="200" y1="110" x2="960" y2="110" stroke="#1B2430" stroke-width="1.5" marker-end="url(#b1)"/>
+  <g font-size="12.5" font-weight="600" fill="#1B2430" text-anchor="middle">
+    <text x="260" y="92">task claimed</text>
+    <text x="420" y="92">agent asks first</text>
+    <text x="580" y="92" fill="#B45309">the write</text>
+    <text x="740" y="92">commit</text>
+    <text x="900" y="92">push / fetch</text>
+  </g>
+  <g font-size="11" fill="#5E6B7A" text-anchor="middle">
+    <text x="260" y="134">a lock on the task,</text>
+    <text x="260" y="148">not on files</text>
+    <text x="420" y="134">if it remembers to</text>
+    <text x="580" y="134" fill="#B45309">the only point an</text>
+    <text x="580" y="148" fill="#B45309">edit can be held</text>
+    <text x="740" y="134">git hook</text>
+    <text x="900" y="134">after the fact</text>
+  </g>
+  <g stroke="#5E6B7A" stroke-width="0.8" stroke-dasharray="3 4">
+    <line x1="260" y1="156" x2="260" y2="430"/>
+    <line x1="420" y1="156" x2="420" y2="430"/>
+    <line x1="580" y1="156" x2="580" y2="430"/>
+    <line x1="740" y1="156" x2="740" y2="430"/>
+    <line x1="900" y1="156" x2="900" y2="430"/>
+  </g>
+
+  <!-- Row: Agent Teams -->
+  <text x="185" y="195" text-anchor="end" font-size="12.5" font-weight="600" fill="#1B2430">Claude Code Agent Teams</text>
+  <circle cx="260" cy="191" r="7" fill="#FFFFFF" stroke="#1B2430" stroke-width="1.5"/>
+  <text x="274" y="195" font-size="11" fill="#5E6B7A">a lock on the task only;</text>
+  <text x="274" y="209" font-size="11" fill="#5E6B7A">same-file edits overwrite</text>
+
+  <!-- Row: claim servers -->
+  <text x="185" y="255" text-anchor="end" font-size="12.5" font-weight="600" fill="#1B2430">Vibsync, agentsync,</text>
+  <text x="185" y="271" text-anchor="end" font-size="12.5" font-weight="600" fill="#1B2430">MCP Agent Coordinator</text>
+  <circle cx="420" cy="259" r="7" fill="#FFFFFF" stroke="#1B2430" stroke-width="1.5"/>
+  <text x="434" y="263" font-size="11" fill="#5E6B7A">advisory claim over MCP</text>
+
+  <!-- Row: MCP Agent Mail -->
+  <text x="185" y="323" text-anchor="end" font-size="12.5" font-weight="600" fill="#1B2430">MCP Agent Mail</text>
+  <circle cx="420" cy="319" r="7" fill="#FFFFFF" stroke="#1B2430" stroke-width="1.5"/>
+  <text x="434" y="323" font-size="11" fill="#5E6B7A">reservation, TTL</text>
+  <circle cx="740" cy="319" r="7" fill="#1B2430"/>
+  <text x="754" y="316" font-size="11" fill="#5E6B7A">guard refuses;</text>
+  <text x="754" y="330" font-size="11" fill="#5E6B7A">AGENT_MAIL_BYPASS=1</text>
+
+  <!-- Row: sankofa -->
+  <rect x="20" y="360" width="960" height="60" rx="4" fill="#D8EEF4"/>
+  <text x="185" y="394" text-anchor="end" font-size="12.5" font-weight="600" fill="#0E7490">sankofa</text>
+  <circle cx="420" cy="390" r="7" fill="#FFFFFF" stroke="#0E7490" stroke-width="1.5"/>
+  <text x="434" y="387" font-size="11" fill="#0E7490">claim a glob</text>
+  <text x="434" y="401" font-size="11" fill="#0E7490">(optional)</text>
+  <circle cx="580" cy="390" r="8" fill="#0E7490"/>
+  <text x="594" y="387" font-size="11" font-weight="600" fill="#0E7490">edit gate: leased</text>
+  <text x="594" y="401" font-size="11" font-weight="600" fill="#0E7490">or denied, by name</text>
+  <circle cx="740" cy="390" r="8" fill="#0E7490"/>
+  <text x="754" y="387" font-size="11" font-weight="600" fill="#0E7490">git gate refuses</text>
+  <text x="754" y="401" font-size="11" font-weight="600" fill="#0E7490">others' paths</text>
+  <circle cx="900" cy="390" r="7" fill="#FFFFFF" stroke="#0E7490" stroke-width="2.5"/>
+  <text x="914" y="387" font-size="11" fill="#0E7490">overlap, landed</text>
+  <text x="914" y="401" font-size="11" fill="#0E7490">events</text>
+
+  <!-- Legend -->
+  <circle cx="40" cy="446" r="6" fill="#FFFFFF" stroke="#1B2430" stroke-width="1.5"/>
+  <text x="52" y="450" font-size="11.5" fill="#5E6B7A">advisory: recorded, not enforced</text>
+  <circle cx="270" cy="446" r="6" fill="#1B2430"/>
+  <text x="282" y="450" font-size="11.5" fill="#5E6B7A">refuses</text>
+  <circle cx="360" cy="446" r="6" fill="#FFFFFF" stroke="#0E7490" stroke-width="2.5"/>
+  <text x="372" y="450" font-size="11.5" fill="#5E6B7A">detects after the fact</text>
+  <text x="40" y="470" font-size="11.5" fill="#5E6B7A">Not shown: Beads, ai-memory, Entire CLI. They hold or record state and never check an edit.</text>
+</svg>

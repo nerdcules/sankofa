@@ -399,6 +399,7 @@ Each drives the real CLI, hook, watcher, and daemon with synthetic sessions.
 - `docs/GAP-ANALYSIS.md` – what Claude Code and other clients already give, what is missing, what sankofa adds
 - `docs/ROADMAP.md` – iterations, each with its tests and exit criteria
 - `docs/agent-channels.md` – the channel map and framework diagrams (figures in `docs/images`)
+- `docs/PRIOR-ART.md` – what else sits between sessions (MCP Agent Mail, Beads, Agent Teams, ai-memory, Entire) and where sankofa differs
 
 Everything here renders on GitHub: Markdown, SVG figures and the PNG renders
 under `docs/images`; nothing needs a build or another site.
