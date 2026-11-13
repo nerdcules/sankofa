@@ -51,12 +51,15 @@ public sealed class Server
     {
         var dir = Path.GetDirectoryName(socketPath)!;
         Directory.CreateDirectory(dir);
-        try { File.SetUnixFileMode(dir, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute); }
-        catch (UnauthorizedAccessException)
+        if (!OperatingSystem.IsWindows())
         {
-            // someone else owns the directory (a /tmp squat on a shared host): they could swap the
-            // socket for their own, so refuse rather than bind into it
-            throw new SankofaException($"{dir} is not owned by this user; refusing to put the socket there (set SANKOFA_SOCKET or XDG_RUNTIME_DIR)");
+            try { File.SetUnixFileMode(dir, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute); }
+            catch (UnauthorizedAccessException)
+            {
+                // someone else owns the directory (a /tmp squat on a shared host): they could swap the
+                // socket for their own, so refuse rather than bind into it
+                throw new SankofaException($"{dir} is not owned by this user; refusing to put the socket there (set SANKOFA_SOCKET or XDG_RUNTIME_DIR)");
+            }
         }
         if (File.Exists(socketPath))
         {
@@ -66,7 +69,7 @@ public sealed class Server
         }
         var s = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
         s.Bind(Endpoint(socketPath));
-        File.SetUnixFileMode(socketPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(socketPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
         s.Listen(128);
         return s;
     }
@@ -319,8 +322,7 @@ public sealed class Server
                 {
                     var repo = Repo();
                     if (store.Bridge(repo) is null) throw new SankofaException("the bridge is not on for this repo (sankofa bridge on)");
-                    var landed = (Bridge ?? new Bridge(store)).Poll(repo)
-                                 ?? throw new SankofaException("a fetch of this repo is already running");
+                    var landed = (Bridge ?? new Bridge(store)).Poll(repo);   // waits for a poll already in flight
                     return new Response { Entries = landed, Bridge = store.Bridge(repo) };
                 }
                 default:

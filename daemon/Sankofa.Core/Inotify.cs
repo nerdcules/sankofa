@@ -8,7 +8,7 @@ namespace Sankofa;
 /// as many watches as it has source directories. Says only which tree changed, and when the
 /// kernel's queue overflowed (then every tree counts as changed).
 /// </summary>
-public sealed partial class Inotify : IDisposable
+public sealed partial class Inotify : ITreeWatcher
 {
     [LibraryImport("libc", SetLastError = true)] private static partial int inotify_init1(int flags);
     [LibraryImport("libc", SetLastError = true, StringMarshalling = StringMarshalling.Utf8)]
