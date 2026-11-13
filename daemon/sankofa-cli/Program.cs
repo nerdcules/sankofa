@@ -117,12 +117,4 @@ last ledger write. A reply that only answers a question is never blocked.
         }
         throw new Exit($"unknown command '{cmd}' (try: sankofa help)");
     }
-
-    /// <summary>A verb the port has not reached yet runs in the shell CLI kept beside this binary (bin/sankofa-sh).</summary>
-    public static int Fallback(string cmd, string[] args)
-    {
-        var sh = Path.GetFullPath(Path.Combine(Env.SelfDir, "..", "sankofa-sh"));
-        if (!File.Exists(sh)) throw new Exit($"'{cmd}' is not available in this build yet");
-        return Env.RunInherit("sh", [sh, cmd, .. args]);
-    }
 }
