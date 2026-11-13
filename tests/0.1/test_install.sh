@@ -32,6 +32,11 @@ if [ -x "$ROOT/bin/out/sankofad" ]; then
   assert_contains "$(cat "$UD")" "ExecStart=$HOME/.local/bin/sankofad serve" "daemon unit points at the daemon"
   [ -L "$HOME/.local/bin/sankofa-hub" ] || fail "hub symlink missing"
 fi
+APP=$HOME/.local/share/applications/sankofa-gui.desktop
+if [ -x "$ROOT/bin/out/sankofa-gui" ]; then
+  [ -L "$HOME/.local/bin/sankofa-gui" ] || fail "window symlink missing"
+  assert_contains "$(cat "$APP")" "Exec=$HOME/.local/bin/sankofa-gui" "launcher entry runs the window"
+fi
 UH=$HOME/.config/systemd/user/sankofa-hub.service
 [ ! -e "$UH" ] || fail "the hub unit is only installed with --hub"
 SANKOFA_HUB_LISTEN=http://100.64.0.7:8787/ "$ROOT/install.sh" --hub >/dev/null
@@ -44,6 +49,8 @@ assert_contains "$(cat "$U")" "ExecStart=$HOME/.local/bin/sankofa-watch" "unit p
 [ ! -e "$UD" ] || fail "daemon unit not removed"
 [ ! -e "$UH" ] || fail "hub unit not removed"
 [ ! -e "$HOME/.local/bin/sankofa-hub" ] || fail "hub symlink not removed"
+[ ! -e "$HOME/.local/bin/sankofa-gui" ] || fail "window symlink not removed"
+[ ! -e "$APP" ] || fail "launcher entry not removed"
 assert_eq "$(grep -c sankofa "$CODEX_HOME/config.toml" || true)" 0 "Codex registration removed"
 assert_contains "$(cat "$CODEX_HOME/config.toml")" "[mcp_servers.other]" "other Codex servers kept"
 [ ! -e "$HOME/.local/bin/sankofad" ] || fail "daemon symlink not removed"

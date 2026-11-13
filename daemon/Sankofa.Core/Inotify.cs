@@ -23,8 +23,9 @@ public sealed partial class Inotify : IDisposable
     const int IN_NONBLOCK = 0x800, IN_CLOEXEC = 0x80000, ENOSPC = 28;
     const uint IN_MODIFY = 0x2, IN_CLOSE_WRITE = 0x8, IN_MOVED_FROM = 0x40, IN_MOVED_TO = 0x80, IN_CREATE = 0x100,
                IN_DELETE = 0x200, IN_DELETE_SELF = 0x400, IN_ONLYDIR = 0x1000000, IN_Q_OVERFLOW = 0x4000,
-               IN_IGNORED = 0x8000, IN_ISDIR = 0x40000000;
-    const uint Mask = IN_MODIFY | IN_CLOSE_WRITE | IN_MOVED_FROM | IN_MOVED_TO | IN_CREATE | IN_DELETE | IN_DELETE_SELF | IN_ONLYDIR;
+               IN_IGNORED = 0x8000, IN_ISDIR = 0x40000000, IN_DONT_FOLLOW = 0x2000000;
+    // IN_DONT_FOLLOW: a directory swapped for a symlink between the check and the watch is not followed out of the tree
+    const uint Mask = IN_MODIFY | IN_CLOSE_WRITE | IN_MOVED_FROM | IN_MOVED_TO | IN_CREATE | IN_DELETE | IN_DELETE_SELF | IN_ONLYDIR | IN_DONT_FOLLOW;
 
     readonly int fd;
     readonly Lock gate = new();
@@ -154,10 +155,18 @@ public sealed partial class Inotify : IDisposable
                 if ((mask & IN_ISDIR) != 0 && (mask & (IN_CREATE | IN_MOVED_TO)) != 0 && name.Length > 0)
                     newDirs.Add((w.Tree, Path.Combine(w.Dir, name)));
             }
-            foreach (var (tree, dir) in newDirs)
-                if (!Skip(tree, dir, null)) { int n = 0; AddDir(tree, dir, null, ref n); }
-            if (overflow) Overflow?.Invoke();
-            foreach (var t in trees) Changed?.Invoke(t);
+            // this is the daemon's own thread: a throw here would end the process, not one scan
+            try
+            {
+                foreach (var (tree, dir) in newDirs)
+                    if (!Skip(tree, dir, null)) { int n = 0; AddDir(tree, dir, null, ref n); }
+                if (overflow) Overflow?.Invoke();
+                foreach (var t in trees) Changed?.Invoke(t);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+            {
+                Console.Error.WriteLine($"sankofad: watcher: {ex.Message}");
+            }
         }
     }
 

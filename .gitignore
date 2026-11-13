@@ -12,3 +12,4 @@ daemon/*/bin/
 daemon/*/obj/
 tests/0.3/Sankofa.Tests/bin/
 tests/0.3/Sankofa.Tests/obj/
+dist/

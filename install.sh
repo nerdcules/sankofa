@@ -1,9 +1,11 @@
 #!/bin/sh
-# Installs sankofa into ~/.local/bin, wires the Stop / SubagentStop hooks into
-# ~/.claude/settings.json, and installs the sankofad and sankofa-watch systemd user
-# services. Builds sankofad first if it is missing and the .NET SDK is present; without
-# it the CLI works on the local ledger alone. Registers `sankofad mcp` with Claude Code
-# (claude mcp add) and Codex (~/.codex/config.toml) when they are installed.
+# Installs sankofa into ~/.local/bin (the CLI, the watcher, and the daemon, MCP server, hub,
+# terminal dashboard and window when built, plus a launcher entry for the window), wires the
+# Stop / SubagentStop / SessionEnd hooks and the edit gate into ~/.claude/settings.json, and
+# installs the sankofad and sankofa-watch systemd user services. Builds the binaries first if
+# sankofad is missing and the .NET SDK is present; without it the CLI works on the local
+# ledger alone. Registers `sankofad mcp` with Claude Code (claude mcp add) and Codex
+# (~/.codex/config.toml) when they are installed.
 # Idempotent. --uninstall reverses it all.
 # Env: SANKOFA_NO_MCP=1 skips the client registrations; CODEX_HOME locates Codex's config.
 # Env: XDG_BIN_HOME, CLAUDE_SETTINGS, XDG_CONFIG_HOME; SANKOFA_NO_SYSTEMD=1 writes the
@@ -16,6 +18,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 BIN=${XDG_BIN_HOME:-$HOME/.local/bin}
 SETTINGS=${CLAUDE_SETTINGS:-$HOME/.claude/settings.json}
 UNIT_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user
+APPS=${XDG_DATA_HOME:-$HOME/.local/share}/applications
 UNITS="sankofad.service sankofa-watch.service"
 CODEX_CONFIG=${CODEX_HOME:-$HOME/.codex}/config.toml
 CODEX_MARK="# sankofa MCP server (install.sh)"
@@ -62,7 +65,8 @@ command -v jq >/dev/null || { echo "install: jq is required" >&2; exit 1; }
 mkdir -p "$BIN" "$(dirname "$SETTINGS")"
 [ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
 
-backup() { cp "$SETTINGS" "$SETTINGS.bak-$(date -u +%Y%m%dT%H%M%SZ)"; }
+# settings can hold keys: the copy is private even where the original is not
+backup() { b=$SETTINGS.bak-$(date -u +%Y%m%dT%H%M%SZ); cp "$SETTINGS" "$b" && chmod 600 "$b"; }
 sysd() { [ "${SANKOFA_NO_SYSTEMD:-0}" = 1 ] && return 0; command -v systemctl >/dev/null || return 0
          systemctl --user "$@" || echo "install: systemctl --user $* failed (no user session?)" >&2; }
 
@@ -73,7 +77,8 @@ if [ "${1:-}" = --uninstall ]; then
   mcp_unregister
   sysd daemon-reload
   [ -f "$UNIT_DIR/sankofa-hub.service" ] && { sysd disable --now sankofa-hub.service; rm -f "$UNIT_DIR/sankofa-hub.service"; }
-  rm -f "$BIN/sankofa" "$BIN/sankofa-watch" "$BIN/sankofad" "$BIN/sankofa-mcp" "$BIN/sankofa-hub" "$BIN/sankofa-tui"
+  rm -f "$BIN/sankofa" "$BIN/sankofa-watch" "$BIN/sankofad" "$BIN/sankofa-mcp" "$BIN/sankofa-hub" "$BIN/sankofa-tui" "$BIN/sankofa-gui"
+  rm -f "$APPS/sankofa-gui.desktop"
   backup
   tmp=$(mktemp)
   jq --argjson hs "$HOOKS" '
@@ -117,6 +122,12 @@ if [ -x "$DAEMON" ]; then
   [ -x "$HERE/bin/out/sankofa-mcp" ] && ln -sf "$HERE/bin/out/sankofa-mcp" "$BIN/sankofa-mcp"
   [ -x "$HERE/bin/out/sankofa-hub" ] && ln -sf "$HERE/bin/out/sankofa-hub" "$BIN/sankofa-hub"
   [ -x "$HERE/bin/out/sankofa-tui" ] && ln -sf "$HERE/bin/out/sankofa-tui" "$BIN/sankofa-tui"
+  if [ -x "$HERE/bin/out/sankofa-gui" ]; then
+    ln -sf "$HERE/bin/out/sankofa-gui" "$BIN/sankofa-gui"
+    # a launcher entry, so the app launcher (Super+Space on Omarchy) finds the window
+    mkdir -p "$APPS"
+    sed "s|@BIN@|$BIN|g" "$HERE/packaging/linux/sankofa-gui.desktop" > "$APPS/sankofa-gui.desktop"
+  fi
   install_unit sankofad.service
   echo "install: $BIN/sankofad -> $DAEMON"
 else

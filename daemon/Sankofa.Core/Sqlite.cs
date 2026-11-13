@@ -108,7 +108,9 @@ public sealed class Db : IDisposable
             int rc = args[i] switch
             {
                 null => Native.sqlite3_bind_null(stmt, i + 1),
-                string s => Native.sqlite3_bind_text(stmt, i + 1, s, -1, Native.Transient),
+                // the byte count, not -1: with -1 sqlite stops at the first NUL, and the row would
+                // then differ from the JSONL mirror of the same event
+                string s => Native.sqlite3_bind_text(stmt, i + 1, s, System.Text.Encoding.UTF8.GetByteCount(s), Native.Transient),
                 long l => Native.sqlite3_bind_int64(stmt, i + 1, l),
                 int n => Native.sqlite3_bind_int64(stmt, i + 1, n),
                 bool b => Native.sqlite3_bind_int64(stmt, i + 1, b ? 1 : 0),

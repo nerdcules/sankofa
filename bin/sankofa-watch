@@ -35,7 +35,8 @@ offset_set() {
 }
 
 toast() { # urgency title body
-  notify-send -a sankofa -u "$1" "$2" "$3" 2>/dev/null || printf 'sankofa-watch: notify-send failed: %s\n' "$2" >&2
+  # -- ends the options, so a title or body starting with a dash is text, not a flag
+  notify-send -a sankofa -u "$1" -- "$2" "$3" 2>/dev/null || printf 'sankofa-watch: notify-send failed: %s\n' "$2" >&2
 }
 
 types_json() { printf '%s' "$TYPES" | tr ', ' '\n\n' | jq -Rsc 'split("\n") | map(select(length > 0))'; }
@@ -61,7 +62,7 @@ scan_repo() { # root
     toast "$urg" "$name: $k new entries" "$body${last:+
 latest awaiting: $last}"
   elif [ "$k" -gt 0 ]; then
-    printf '%s\n' "$new" | jq -r '[.type, .agent, (.text | gsub("[\t\n]"; " ")), (.branch // "-" | sub("^[^/]*/"; ""))] | @tsv' \
+    printf '%s\n' "$new" | jq -r '[.type, .agent, (.text | gsub("[\t\n\r]"; " ")), (.branch // "-" | sub("^[^/]*/"; ""))] | join("\t")' \
     | while IFS="$(printf '\t')" read -r type agent text branch; do
         case $type in
           awaiting) toast critical "$name: awaiting you" "$text" ;;

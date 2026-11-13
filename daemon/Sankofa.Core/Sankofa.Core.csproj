@@ -8,4 +8,7 @@
     <RootNamespace>Sankofa</RootNamespace>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Sankofa.Tests" />
+  </ItemGroup>
 </Project>

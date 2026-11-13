@@ -9,6 +9,9 @@ arch=('x86_64')
 url="https://github.com/nerdcules/sankofa"
 license=('MIT')
 depends=('sh' 'jq' 'git' 'sqlite' 'inotify-tools' 'libnotify')
+# the window (sankofa-gui) draws with Skia on X11 or Wayland; absent on a server, the rest still works
+optdepends=('fontconfig: the dashboard in a window (sankofa-gui)'
+            'libx11: the dashboard in a window (sankofa-gui)')
 makedepends=('dotnet-sdk' 'clang')
 options=('!strip' '!debug')
 source=("sankofa::${SANKOFA_SRC:-git+https://github.com/nerdcules/sankofa.git#tag=v$pkgver}")
@@ -21,6 +24,10 @@ build() {
   dotnet publish daemon/sankofa-mcp -c Release -r linux-x64 -o out --nologo -v quiet
   dotnet publish daemon/sankofa-hub -c Release -r linux-x64 -o out --nologo -v quiet
   dotnet publish daemon/sankofa-tui -c Release -r linux-x64 -o out --nologo -v quiet
+  # the window (0.12, Avalonia): its two native libraries go beside it, so it gets a directory of its own
+  if [ -d daemon/sankofa-gui ]; then
+    dotnet publish daemon/sankofa-gui -c Release -r linux-x64 -o out/gui --nologo -v quiet
+  fi
 }
 
 check() {
@@ -34,6 +41,13 @@ package() {
   install -Dm755 out/sankofa-mcp "$pkgdir/usr/bin/sankofa-mcp"
   install -Dm755 out/sankofa-hub "$pkgdir/usr/bin/sankofa-hub"
   install -Dm755 out/sankofa-tui "$pkgdir/usr/bin/sankofa-tui"
+  if [ -x out/gui/sankofa-gui ]; then
+    install -Dm755 out/gui/sankofa-gui "$pkgdir/usr/lib/sankofa/sankofa-gui"
+    install -Dm755 out/gui/libSkiaSharp.so out/gui/libHarfBuzzSharp.so -t "$pkgdir/usr/lib/sankofa"
+    ln -s ../lib/sankofa/sankofa-gui "$pkgdir/usr/bin/sankofa-gui"
+    sed 's|@BIN@|/usr/bin|g' packaging/linux/sankofa-gui.desktop \
+      | install -Dm644 /dev/stdin "$pkgdir/usr/share/applications/sankofa-gui.desktop"
+  fi
   install -Dm755 bin/sankofa "$pkgdir/usr/bin/sankofa"
   install -Dm755 bin/sankofa-watch "$pkgdir/usr/bin/sankofa-watch"
   install -Dm755 hooks/git-pre-commit "$pkgdir/usr/share/sankofa/hooks/git-pre-commit"

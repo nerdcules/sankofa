@@ -41,7 +41,7 @@ static class Mcp
             a => Opt(a, "text") is { Length: > 0 } t ? ["done", S(a, "id"), t] : ["done", S(a, "id")]),
         new("open", "List the unresolved todo and awaiting items.", Obj(""), _ => ["open"]),
         new("last", "Show the newest ledger entries.", Obj(""" "n": {"type": "integer", "minimum": 1, "maximum": 200, "description": "How many (default 10)."} """),
-            a => ["last", a.ValueKind == JsonValueKind.Object && a.TryGetProperty("n", out var n) && n.TryGetInt32(out var k) ? k.ToString(System.Globalization.CultureInfo.InvariantCulture) : "10"]),
+            a => ["last", a.ValueKind == JsonValueKind.Object && a.TryGetProperty("n", out var n) && n.TryGetInt32(out var k) ? Math.Clamp(k, 1, 200).ToString(System.Globalization.CultureInfo.InvariantCulture) : "10"]),
         new("claim", "Lease paths before editing them, so other sessions and subagents leave them alone. Says who holds them if they are taken.",
             Obj(""" "glob": {"type": "string", "description": "Path or glob relative to the repo root, like src/net/** ."}, "ttl": {"type": "string", "description": "How long, like 90, 30m, 2h (default 30m)."} """, "glob"),
             a => Opt(a, "ttl") is { Length: > 0 } t ? ["claim", S(a, "glob"), t] : ["claim", S(a, "glob")]),
@@ -63,6 +63,9 @@ static class Mcp
         return "sankofa";
     }
 
+    static readonly TimeSpan CliTimeout = TimeSpan.FromSeconds(120);
+    const int MaxOutput = 1 << 20;
+
     static (int Code, string Out, string Err) Run(string[] args, string cwd, string? client)
     {
         var psi = new ProcessStartInfo(Cli()) { WorkingDirectory = cwd, RedirectStandardOutput = true, RedirectStandardError = true };
@@ -72,9 +75,12 @@ static class Mcp
         if (client is not null) psi.Environment["SANKOFA_CLIENT"] = $"mcp:{client}";
         using var p = Process.Start(psi)!;
         var o = p.StandardOutput.ReadToEndAsync();
-        var e = p.StandardError.ReadToEnd();
-        p.WaitForExit();
-        return (p.ExitCode, o.Result.TrimEnd(), e.TrimEnd());
+        var e = p.StandardError.ReadToEndAsync();
+        // a tool call that never returns wedges the client; the CLI answers in milliseconds or fails
+        if (!p.WaitForExit(CliTimeout)) { try { p.Kill(true); } catch (InvalidOperationException) { } throw new SankofaException($"sankofa {args[0]} did not finish within {CliTimeout.TotalSeconds:0} s"); }
+        var outp = o.Result.TrimEnd(); var err = e.Result.TrimEnd();
+        if (outp.Length > MaxOutput) outp = outp[..MaxOutput] + "\n… (cut)";
+        return (p.ExitCode, outp, err);
     }
 
     static CallToolResult Result(string text, bool error) =>

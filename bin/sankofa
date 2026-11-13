@@ -55,7 +55,7 @@ usage: sankofa <command> [args]
   dash [repo...]       the dashboard in the terminal (sankofa-tui): what waits on you,
                        what is open, who holds what; menus, F1 for keys. Repos default to
                        this one, else the watched ones. dash summary [--json] prints it;
-                       dash --qt opens the Qt window (sankofa-dash) where installed
+                       dash --gui opens it in a window (sankofa-gui: Windows, macOS, Linux)
   watch add [dir]      toast this repo's awaiting, overlap and landed events (sankofa-watch)
   watch list           show watched repos
   watch rm [dir]       stop watching a repo
@@ -220,10 +220,12 @@ open_items() { # id \t type \t ts \t text
     ([.[] | select(.type=="done") | .ref]) as $done
     | .[]
     | select((.type=="todo" or .type=="awaiting" or .type=="handoff") and (IN(.id; $done[]) | not))
-    | [.id, .type, .ts, .text] | @tsv' "$LEDGER"
+    | [.id, .type, .ts, (.text | gsub("[\t\n\r]"; " "))] | join("\t")' "$LEDGER"
 }
 
-render() { jq -r '"\(.ts)  \(.id)  \(.type)\t[\(.agent)\(if .device then "@\(.device)" else "" end)]  \(.text)\(if .ref then "  (\(.ref))" else "" end)"'; }
+# Drops control bytes (escape sequences included) so text written by someone else cannot drive the terminal.
+printable() { tr -d '\000-\010\013-\037\177'; }
+render() { jq -r '"\(.ts)  \(.id)  \(.type)\t[\(.agent)\(if .device then "@\(.device)" else "" end)]  \(.text)\(if .ref then "  (\(.ref))" else "" end)"' | printable; }
 
 item_exists() { jq -e --arg id "$1" 'select(.id==$id and (.type=="todo" or .type=="awaiting" or .type=="handoff" or .type=="claim"))' "$LEDGER" >/dev/null 2>&1; }
 # a claim with no done yet (whether it is still live is the daemon's call; it applies the done on import)
@@ -324,7 +326,7 @@ finish_handoff() {
   now=$(printf '%s\n' "$st" | sed -n 1p); mk=$(printf '%s\n' "$st" | sed -n 2p)
   by=
   if [ "$now" = "$tag" ]; then :
-  elif by=$(taken_by "$remote" "$rb" "$tag" "$mk") && [ -n "$by" ]; then :
+  elif by=$(taken_by "$remote" "$rb" "$tag" "$mk" | printable) && [ -n "$by" ]; then :
   elif [ "$now" = "$old" ] || [ -z "$now" ]; then
     # --force-with-lease: replace only what was there when this handoff began (nothing, or
     # this branch's previous letter), never a letter someone else wrote meanwhile
@@ -542,8 +544,9 @@ cmd_pickup() {
     git cat-file -e "$sha^{commit}" 2>/dev/null || die "commit $sha of $b is not here; did git fetch $remote fail?"
     tag=$(git rev-parse -q --verify "refs/sankofa/remote/$b" || :)
     if [ -n "$tag" ] && [ "$(git rev-parse "$tag^{commit}")" = "$sha" ]; then
-      letter=$(git cat-file tag "$tag" | sed '1,/^$/d')
-      who=$(git cat-file tag "$tag" | sed -n 's/^tagger \(.*\) <.*/\1/p')
+      # written by whoever could push the ref: keep it printable before it reaches a terminal
+      letter=$(git cat-file tag "$tag" | sed '1,/^$/d' | printable)
+      who=$(git cat-file tag "$tag" | sed -n 's/^tagger \(.*\) <.*/\1/p' | printable)
     else
       tag=; letter=$(jq -r --arg id "$hid" 'select(.id==$id) | .text' "$LEDGER")
       who=$(jq -r --arg id "$hid" 'select(.id==$id) | .device // .session' "$LEDGER")
@@ -583,7 +586,13 @@ cmd_pickup() {
   # without a hub the open items exist only in the letter: carry them over as todos here, but not
   # one already open here (an interrupted pickup finished, or the same item in an earlier letter)
   if [ -z "$(cfg hub_repo "")" ]; then
-    printf '%s\n' "$letter" | sed -n '/^Open items:$/,$ s/^- \([^ ]*\) [a-z]*: \(.*\)/\2 (from '"$who"', was \1)/p' |
+    # the letter and the tagger came from the remote: they are data here, never part of a program
+    printf '%s\n' "$letter" | WHO=$who awk '
+        /^Open items:$/ { on = 1; next }
+        on && match($0, /^- [^ ]* [a-z]*: /) {
+          id = substr($0, 3); sub(/ .*/, "", id)
+          printf "%s (from %s, was %s)\n", substr($0, RLENGTH + 1), ENVIRON["WHO"], id
+        }' |
       while IFS= read -r t; do
         open_items | awk -F'\t' '$2 == "todo" { print $4 }' | grep -qxF -- "$t" || append todo "$t" >/dev/null
       done
@@ -984,11 +993,10 @@ main() {
     trees)     cmd_trees "$@" ;;
     bridge)    cmd_bridge "$@" ;;
     hub)       cmd_hub "$@" ;;
-    dash)      if [ "${1:-}" = --qt ]; then
+    dash)      if [ "${1:-}" = --gui ]; then
                  shift
-                 d=$(command -v sankofa-dash 2>/dev/null || :)
-                 [ -n "$d" ] || { [ -x "$SELF_DIR/../dashboard/build/sankofa-dash" ] && d=$SELF_DIR/../dashboard/build/sankofa-dash; }
-                 [ -n "$d" ] || die "sankofa-dash is not installed (dashboard/bin/install, or make dash)"
+                 d=$SELF_DIR/out/sankofa-gui; [ -x "$d" ] || d=$(command -v sankofa-gui 2>/dev/null || :)
+                 [ -n "$d" ] || die "sankofa-gui is not built (make build)"
                else
                  d=$SELF_DIR/out/sankofa-tui; [ -x "$d" ] || d=$(command -v sankofa-tui 2>/dev/null || :)
                  [ -n "$d" ] || die "sankofa-tui is not built (make build)"

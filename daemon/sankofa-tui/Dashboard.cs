@@ -320,9 +320,9 @@ sealed class Dashboard(Board board, BoardFiles files, Func<IEnumerable<string>> 
         var text = row switch
         {
             Board.Item i => Snapshot.Command(i),
-            Board.LeaseRow l => l.Glob,
-            Board.Word w => w.Text,
-            Board.Alert a => a.Text,
+            Board.LeaseRow l => Safe.Printable(l.Glob),
+            Board.Word w => Safe.Printable(w.Text),
+            Board.Alert a => Safe.Printable(a.Text),
             _ => null,
         };
         if (text is null) return;

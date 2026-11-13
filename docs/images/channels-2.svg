@@ -1,0 +1,91 @@
+<svg color="#1B2430" font-family="'IBM Plex Sans','Segoe UI',system-ui,sans-serif" viewBox="0 0 1000 520" role="img" aria-label="This session messages another local session directly over a socket, two-way. Messages to sessions on other machines and cloud sessions pass through Anthropic servers; a cloud session cannot send a reply. A Claude Project receives one confirmed message." xmlns="http://www.w3.org/2000/svg">
+<rect width="100%" height="100%" fill="#F5F7FA"/>
+<style>.mono { font-family:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,monospace; }</style>
+
+  <defs>
+    <marker id="b1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1B2430"/>
+    </marker>
+    <marker id="b2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0E7490"/>
+    </marker>
+  </defs>
+
+  <!-- This session -->
+  <rect x="30" y="190" width="210" height="140" rx="4" fill="#D8EEF4" stroke="#1B2430" stroke-width="1.5"/>
+  <text x="135" y="220" text-anchor="middle" font-size="15" font-weight="600" fill="#1B2430">This session</text>
+  <text x="135" y="242" text-anchor="middle" font-size="12" fill="#5E6B7A">ListAgents finds targets</text>
+  <text x="135" y="266" text-anchor="middle" font-size="11.5" class="mono" fill="#1B2430">a subagent sends under</text>
+  <text x="135" y="282" text-anchor="middle" font-size="11.5" class="mono" fill="#1B2430">the parent's address;</text>
+  <text x="135" y="298" text-anchor="middle" font-size="11.5" class="mono" fill="#1B2430">replies land in the parent</text>
+  <text x="135" y="318" text-anchor="middle" font-size="11" fill="#5E6B7A">inbound: accept · hold · refuse</text>
+
+  <line x1="240" y1="260" x2="280" y2="260" stroke="#1B2430" stroke-width="1.5"/>
+  <line x1="280" y1="70" x2="280" y2="455" stroke="#1B2430" stroke-width="1.5"/>
+
+  <!-- Row 1: local session, direct -->
+  <line x1="280" y1="70" x2="700" y2="70" stroke="#1B2430" stroke-width="1.5" marker-end="url(#b1)"/>
+  <text x="490" y="63" text-anchor="middle" font-size="11.5" fill="#1B2430">per-session socket on this machine, never leaves it</text>
+  <line x1="700" y1="100" x2="280" y2="100" stroke="#0E7490" stroke-width="1.5" marker-end="url(#b2)"/>
+  <text x="490" y="117" text-anchor="middle" font-size="11.5" fill="#0E7490">reply · delivery notice · one-shot idle notice</text>
+
+  <rect x="700" y="40" width="270" height="96" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-width="1.5"/>
+  <text x="835" y="66" text-anchor="middle" font-size="14" font-weight="600" fill="#1B2430">Another local session</text>
+  <text x="835" y="86" text-anchor="middle" font-size="12" fill="#5E6B7A">same machine, two-way</text>
+  <text x="835" y="106" text-anchor="middle" font-size="11.5" class="mono" fill="#1B2430">≈1M chars · 50 queued · 100 held</text>
+  <text x="835" y="124" text-anchor="middle" font-size="11.5" class="mono" fill="#1B2430">different permission mode → held</text>
+
+  <!-- Relay box -->
+  <rect x="430" y="180" width="130" height="190" rx="4" fill="none" stroke="#1B2430" stroke-width="1" stroke-dasharray="5 4"/>
+  <text x="495" y="205" text-anchor="middle" font-size="12" font-weight="600" fill="#1B2430">Anthropic servers</text>
+  <text x="495" y="223" text-anchor="middle" font-size="11" fill="#5E6B7A">needs claude.ai sign-in</text>
+  <text x="495" y="239" text-anchor="middle" font-size="11" fill="#5E6B7A">API key / Bedrock /</text>
+  <text x="495" y="254" text-anchor="middle" font-size="11" fill="#5E6B7A">Vertex can't see these</text>
+  <text x="495" y="340" text-anchor="middle" font-size="11" fill="#B45309">nothing reports delivery</text>
+  <text x="495" y="356" text-anchor="middle" font-size="11" fill="#B45309">silence ≠ agreement</text>
+
+  <!-- Row 2: other machine / remote control -->
+  <line x1="280" y1="215" x2="430" y2="215" stroke="#1B2430" stroke-width="1.5"/>
+  <line x1="560" y1="215" x2="700" y2="215" stroke="#1B2430" stroke-width="1.5" marker-end="url(#b1)"/>
+  <line x1="700" y1="245" x2="560" y2="245" stroke="#0E7490" stroke-width="1.5"/>
+  <line x1="430" y1="245" x2="280" y2="245" stroke="#0E7490" stroke-width="1.5" marker-end="url(#b2)"/>
+  <text x="630" y="208" text-anchor="middle" font-size="11.5" fill="#1B2430">message</text>
+  <text x="630" y="262" text-anchor="middle" font-size="11.5" fill="#0E7490">it can reply</text>
+
+  <rect x="700" y="185" width="270" height="80" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-width="1.5"/>
+  <text x="835" y="211" text-anchor="middle" font-size="14" font-weight="600" fill="#1B2430">Session on another machine</text>
+  <text x="835" y="231" text-anchor="middle" font-size="12" fill="#5E6B7A">visible once Remote Control is on</text>
+  <text x="835" y="251" text-anchor="middle" font-size="11.5" class="mono" fill="#1B2430">also: Claude Desktop sessions</text>
+
+  <!-- Row 3: cloud session -->
+  <line x1="280" y1="300" x2="430" y2="300" stroke="#1B2430" stroke-width="1.5"/>
+  <line x1="560" y1="300" x2="700" y2="300" stroke="#1B2430" stroke-width="1.5" marker-end="url(#b1)"/>
+  <text x="630" y="293" text-anchor="middle" font-size="11.5" fill="#1B2430">message</text>
+  <line x1="700" y1="330" x2="580" y2="330" stroke="#B45309" stroke-width="1.5" stroke-dasharray="2 4"/>
+  <line x1="574" y1="322" x2="586" y2="338" stroke="#B45309" stroke-width="2"/>
+  <line x1="586" y1="322" x2="574" y2="338" stroke="#B45309" stroke-width="2"/>
+  <text x="640" y="347" text-anchor="middle" font-size="11.5" fill="#B45309">no SendMessage back</text>
+
+  <rect x="700" y="275" width="270" height="96" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-width="1.5"/>
+  <text x="835" y="301" text-anchor="middle" font-size="14" font-weight="600" fill="#1B2430">Cloud session</text>
+  <text x="835" y="321" text-anchor="middle" font-size="12" fill="#5E6B7A">claude.ai/code</text>
+  <text x="835" y="341" text-anchor="middle" font-size="11.5" class="mono" fill="#1B2430">it receives and acts</text>
+  <text x="835" y="359" text-anchor="middle" font-size="11.5" class="mono" fill="#1B2430">you read its answer in its transcript</text>
+
+  <!-- Row 4: project -->
+  <line x1="280" y1="430" x2="700" y2="430" stroke="#1B2430" stroke-width="1.5" marker-end="url(#b1)"/>
+  <text x="490" y="423" text-anchor="middle" font-size="11.5" fill="#1B2430">one message, only in the turn you ran /send-to-project</text>
+  <text x="490" y="447" text-anchor="middle" font-size="11" fill="#5E6B7A">carries this session's Remote Control id so the project can read it back</text>
+
+  <rect x="700" y="400" width="270" height="80" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-width="1.5"/>
+  <text x="835" y="426" text-anchor="middle" font-size="14" font-weight="600" fill="#1B2430">Claude Project</text>
+  <text x="835" y="446" text-anchor="middle" font-size="12" fill="#5E6B7A">coordinator + cloud threads</text>
+  <text x="835" y="466" text-anchor="middle" font-size="11.5" class="mono" fill="#1B2430">user confirms before it sends</text>
+
+  <!-- message content note -->
+  <text x="30" y="380" font-size="12" font-weight="600" fill="#1B2430">What a cross-session message is</text>
+  <text x="30" y="398" font-size="11.5" fill="#5E6B7A">Plain text, read literally. Slash commands</text>
+  <text x="30" y="414" font-size="11.5" fill="#5E6B7A">arrive as words. @file attaches nothing.</text>
+  <text x="30" y="430" font-size="11.5" fill="#5E6B7A">It cannot approve a permission or change</text>
+  <text x="30" y="446" font-size="11.5" fill="#5E6B7A">any config. Receiving one costs a prompt.</text>
+</svg>

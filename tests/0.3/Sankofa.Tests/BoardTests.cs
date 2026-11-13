@@ -4,7 +4,7 @@ using Sankofa;
 public class BoardTests : IDisposable
 {
     static readonly DateTimeOffset Now = DateTimeOffset.Parse("2026-11-11T10:00:00.000Z", System.Globalization.CultureInfo.InvariantCulture);
-    static string Fixtures => Path.Combine(AppContext.BaseDirectory, "../../../../../../dashboard/tests/fixtures");
+    static string Fixtures => Path.Combine(AppContext.BaseDirectory, "../../../../../fixtures");
     readonly string dir = Directory.CreateTempSubdirectory("board").FullName;
     public void Dispose() => Directory.Delete(dir, true);
 
