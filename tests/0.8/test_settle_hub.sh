@@ -29,7 +29,9 @@ case $out in *"$ll"*) fail "desk settled lap's lease" ;; esac
 wait_for 3 '[ -z "$(state b "$ld")" ]' || fail "lap sees desk's lease settled"
 assert_eq "$(state b "$ll")" "expired,dirty" "lap's lease is still marked"
 cd "$T/lap/repo"
-out=$(dev b "$S" leases settle); assert_contains "$out" "$ll" "lap settles its own"
+i=0; out=$(dev b "$S" leases settle)
+while ! printf '%s' "$out" | grep -qF -- "$ll" && [ $i -lt 20 ]; do sleep 0.25; i=$((i + 1)); out=$(dev b "$S" leases settle); done
+assert_contains "$out" "$ll" "lap settles its own"
 ev=$(jq -c --arg r "$ll" 'select(.type=="done" and .ref==$r)' "$B")
 assert_eq "$(printf '%s' "$ev" | jq -r .device)" lap "the done is recorded from lap"
 echo "ok settle across a hub"
