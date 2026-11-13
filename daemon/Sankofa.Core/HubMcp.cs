@@ -55,8 +55,8 @@ sealed class HubMcp(Hub hub)
             case "POST": break;
             default: res.StatusCode = 405; return;
         }
-        string body;
-        using (var r = new StreamReader(ctx.Request.InputStream, Encoding.UTF8)) body = await r.ReadToEndAsync(ct);
+        var body = await Hub.ReadBody(ctx.Request, ct);
+        if (body is null) { await Write(res, 413, Error(null, -32600, "request body too large").ToJsonString()); return; }
         JsonNode? msg;
         try { msg = JsonNode.Parse(body); }
         catch (JsonException) { await Write(res, 400, Error(null, -32700, "parse error").ToJsonString()); return; }
@@ -135,7 +135,7 @@ sealed class HubMcp(Hub hub)
             case "note" or "todo" or "awaiting": rq.Verb = "append"; rq.Type = name; rq.Text = S("text"); break;
             case "done": rq.Verb = "done"; rq.Ref = S("id"); rq.Text = O("text"); break;
             case "open": rq.Verb = "open"; break;
-            case "last": rq.Verb = "last"; rq.N = a["n"] is { } n ? n.GetValue<int>() : 10; break;
+            case "last": rq.Verb = "last"; rq.N = a["n"] is { } n ? Math.Clamp(n.GetValue<int>(), 1, 200) : 10; break;
             case "claim": rq.Verb = "claim"; rq.Glob = S("glob"); rq.Ttl = a["ttl"] is { } t ? t.GetValue<long>() : null; break;
             case "release": rq.Verb = "release"; rq.Ref = S("id"); break;
             case "ask": rq.Verb = "ask"; rq.Path = S("path"); break;

@@ -52,7 +52,12 @@ public sealed class Server
         var dir = Path.GetDirectoryName(socketPath)!;
         Directory.CreateDirectory(dir);
         try { File.SetUnixFileMode(dir, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute); }
-        catch (UnauthorizedAccessException) { }
+        catch (UnauthorizedAccessException)
+        {
+            // someone else owns the directory (a /tmp squat on a shared host): they could swap the
+            // socket for their own, so refuse rather than bind into it
+            throw new SankofaException($"{dir} is not owned by this user; refusing to put the socket there (set SANKOFA_SOCKET or XDG_RUNTIME_DIR)");
+        }
         if (File.Exists(socketPath))
         {
             using var probe = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
@@ -129,11 +134,21 @@ public sealed class Server
         {
             long last = req.Since ?? long.MaxValue;
             if (req.Since is { } since)
-                foreach (var e in store.EventsSince(since, repo))
+            {
+                // the whole backlog, page by page: one page and then the live channel would leave a
+                // hole in a replica that was away for longer than a page
+                while (true)
                 {
-                    await w.WriteLineAsync(JsonSerializer.Serialize(e, Json.Wire.Entry));
-                    last = e.Seq ?? last;
+                    var page = store.EventsSince(since, repo, Store.EventPage);
+                    foreach (var e in page)
+                    {
+                        await w.WriteLineAsync(JsonSerializer.Serialize(e, Json.Wire.Entry));
+                        last = e.Seq ?? last;
+                        since = e.Seq ?? since;
+                    }
+                    if (page.Count < Store.EventPage) break;
                 }
+            }
             await w.FlushAsync();
             while (true)
             {

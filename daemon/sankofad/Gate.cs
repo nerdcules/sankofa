@@ -188,8 +188,10 @@ static class Gate
         try
         {
             using var p = Process.Start(psi)!;
+            var err = p.StandardError.ReadToEndAsync();   // drained too, or a chatty git fills its pipe and never exits
             var output = p.StandardOutput.ReadToEnd();
             p.WaitForExit();
+            err.Wait();
             return p.ExitCode == 0 ? output : null;
         }
         catch (System.ComponentModel.Win32Exception) { return null; }

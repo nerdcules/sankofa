@@ -14,7 +14,7 @@ sankofa is a substrate, not an agent. It records and answers. It never decides.
 AI compresses a dev team into one technician driving several sessions:
 subagents, forks, teams, a second client, a cloud run, a laptop. The channels
 between those sessions are plain text, ephemeral, and blind to each other
-(see `docs/agent-channels.html`). Nothing durable sits between them. sankofa is
+(see `docs/agent-channels.md`). Nothing durable sits between them. sankofa is
 that durable thing.
 
 ## Shape
@@ -39,7 +39,8 @@ MCP server so any MCP client can use the ledger without a shell, and detection
 where prevention is not possible: two worktrees changing one path, and work
 that landed on a remote while you were away. A hub shares one ledger and one
 lease table between your machines, and with cloud sessions over MCP. A
-terminal dashboard (`sankofa dash`) shows all of it in one screen, and a
+terminal dashboard (`sankofa dash`) shows all of it in one screen (and, in
+progress for 0.12, a window on Windows, macOS and Linux: `sankofa dash --gui`), and a
 handoff passes a branch with its context to a teammate, and survives being cut
 off halfway. See `docs/ROADMAP.md` for what comes next. Each iteration ships with
 tests, and its usage gate is run as an accelerated simulation (`sim/`) against
@@ -48,9 +49,9 @@ the real code before the next starts.
 ## Quick start
 
 ```sh
-./install.sh            # builds sankofad if needed, links ~/.local/bin/sankofa{,d,-watch},
-                        # adds the Stop, SubagentStop, SessionEnd and edit-gate hooks,
-                        # enables the sankofad and sankofa-watch systemd user services
+./install.sh            # builds the binaries if needed, links ~/.local/bin/sankofa{,d,-watch,-mcp,-hub,-tui,-gui}
+                        # and a launcher entry for the window, adds the Stop, SubagentStop, SessionEnd and
+                        # edit-gate hooks, enables the sankofad and sankofa-watch systemd user services
 cd ~/Work/some-repo
 sankofa init            # creates .sankofa/ (add it to .gitignore or commit it, your call)
 sankofa watch add       # toast this repo's awaiting items on the desktop
@@ -273,7 +274,10 @@ another device held meanwhile is recorded as contention plus a flag, and the
 replica's tail is replaced by the hub's copy. Reads that need the hub
 (`leases`, the commit gate) fail while it is down; commits stay gated. A
 revoked or unknown token is refused (401) and logged by the hub; nothing is
-queued for it.
+queued for it. A token tells devices apart; it does not limit one: any device
+with a token can read every shared repo and finish any item or lease (one
+technician, many devices), which is why the hub belongs on the private
+network and nowhere else. Bodies over 16 MB are refused.
 
 A client that cannot run `sankofad`, like a cloud session, speaks MCP to the
 hub directly: `POST http://<hub>/mcp` with `Authorization: Bearer <token>`.
@@ -316,8 +320,53 @@ it; `SANKOFA_TUI_SPLASH=0` turns it off).
   follows the ledger files, so it works with no daemon and for hub replicas.
 - `sankofa dash summary [--json]` prints the same with no terminal.
 
-On Omarchy, `sankofa dash --qt` opens `sankofa-dash`, the Qt window, with the
-same panels (see `dashboard/README.md`).
+## The dashboard in a window
+
+`sankofa dash --gui` (or `sankofa-gui`, or Sankofa in the app launcher) opens
+the same ledger in a window, on Windows, macOS and Linux: one C# program on
+Avalonia (MIT), sharing the terminal dashboard's `Board`, so the two never
+disagree about what is open or held. It reads the ledger files and never
+writes. Four pictures, one per platform's look, any of them anywhere (keys 1–4):
+
+| Picture | Opens first on | Shows | Moves |
+|---|---|---|---|
+| Session constellation | Windows | each session around the ledger, sized by what it holds | a pulse on sessions active in the last 2 minutes; dashes flow on links that hold paths |
+| Device map | macOS | every device writing to the ledger (the hub's `@device`), and the remote when work landed | packets travel to the hub for events in the last 5 minutes; a dashed ring for writes queued offline |
+| Lease heatmap | Linux (KDE, GNOME, …) | every held path, and ended ones that may be half-finished | contested paths (an overlap touches them) beat; half-finished ones breathe |
+| Radar | Omarchy | everything, by age: now at the centre, a day at the edge | a turning sweep; what waits on you pulses |
+
+Click anything for the side panel: what it is, who, how long ago, and the
+command it stands for (`sankofa done e6`, `sankofa pickup e14`), with a copy
+button. On Omarchy the colours follow the current theme live
+(`~/.local/state/omarchy/current/theme/colors.toml`); elsewhere each look has
+its platform's own. `--look windows|mac|breeze|omarchy` and
+`--picture constellation|map|heatmap|radar` choose; `SANKOFA_GUI_MOTION=0` (or
+`--still`) stops the motion.
+
+```sh
+make build              # bin/out/sankofa-gui (Native AOT, linux-x64) with libSkiaSharp/libHarfBuzzSharp
+make gui-dist           # dist/sankofa-gui-{win-x64,win-arm64,osx-arm64,osx-x64,linux-arm64}: one file each
+sankofa-gui render --out dash.png --picture radar tests/fixtures/*.jsonl   # headless, no display
+sankofa-gui scene .     # what it would draw, as text
+```
+
+The four pictures, rendered that way from `tests/fixtures` (the images under
+`docs/images` are made with the same command):
+
+<table>
+<tr>
+<td><a href="docs/images/constellation.png"><img src="docs/images/constellation.png" alt="Session constellation, Windows look" width="100%"></a><br>Session constellation (Windows look)</td>
+<td><a href="docs/images/map.png"><img src="docs/images/map.png" alt="Device map, macOS look" width="100%"></a><br>Device map (macOS look)</td>
+</tr>
+<tr>
+<td><a href="docs/images/heatmap.png"><img src="docs/images/heatmap.png" alt="Lease heatmap, Linux look" width="100%"></a><br>Lease heatmap (Linux look)</td>
+<td><a href="docs/images/radar.png"><img src="docs/images/radar.png" alt="Radar, Omarchy look" width="100%"></a><br>Radar (Omarchy look)</td>
+</tr>
+</table>
+
+The daemon, hooks and hub stay Linux; on another platform the window reads
+ledgers that the CLI's local fallback or a hub replica keeps there. The Qt
+window for Omarchy that 0.8 shipped is gone (2026-11-12); this one replaces it.
 
 ## Simulations
 
@@ -349,11 +398,16 @@ Each drives the real CLI, hook, watcher, and daemon with synthetic sessions.
 - `docs/SCENARIOS.md` – the concrete situations it exists for
 - `docs/GAP-ANALYSIS.md` – what Claude Code and other clients already give, what is missing, what sankofa adds
 - `docs/ROADMAP.md` – iterations, each with its tests and exit criteria
-- `docs/agent-channels.html` – the channel map and framework diagrams
+- `docs/agent-channels.md` – the channel map and framework diagrams (figures in `docs/images`)
+
+Everything here renders on GitHub: Markdown, SVG figures and the PNG renders
+under `docs/images`; nothing needs a build or another site.
 
 ## Language
 
 Hooks and the first iterations are POSIX shell + jq (nothing to compile, runs
-on every edit). The daemon is C# with Native AOT: one 4 MB binary that starts
-in about 4 ms and calls the system libsqlite3 directly, with no other runtime
-dependency. The hub transport is HTTP so moving to a server is config.
+on every edit). The daemon is C# with Native AOT: one 5 MB binary that starts
+in about 6 ms and calls the system libsqlite3 directly, with no other runtime
+dependency (`sankofad bench`, 0.11: startup 6 ms median, `ask` 0.09 ms on an
+open socket, the edit gate 4 ms as a process). The hub transport is HTTP so
+moving to a server is config.

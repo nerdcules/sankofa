@@ -193,6 +193,10 @@ ledger helps in daily use across two machines; that is left to real use.
 
 Deliver: Omarchy-style Qt app or a TUI subscribing to `events --follow`.
 
+Dropped (2026-11-12, e202): the Qt app and `sankofa dash --qt` were removed
+once the terminal dashboard (0.10) and the window (0.12) covered it; its
+fixtures moved to `tests/fixtures`. The outcome below is kept as history.
+
 Outcome (0.8.0): `dashboard/`, `sankofa-dash`, a Qt Quick app on the Omarchy
 app template (theme accent and rounding live, language live, keyboard
 first), opened with `sankofa dash`. It follows the ledger files rather than
@@ -259,7 +263,7 @@ sender's own machine and none missed. Not simulated: handoffs through a hub.
 
 Deliver: `sankofa-tui`, the dashboard in the terminal, for everyone who is not
 on Omarchy (and over SSH): Turbo Vision style, on Terminal.Gui v2, Native AOT.
-`sankofa dash` opens it; the Qt app stays as `sankofa dash --qt`.
+`sankofa dash` opens it; the Qt app stayed as `sankofa dash --qt` until 0.12.
 
 Tests: the fold (`Board`, in Sankofa.Core) on the Qt dashboard's fixtures,
 following appended, half-written, replaced and emptied files; `summary` and
@@ -351,6 +355,92 @@ Outcome (0.11.0, 2026-11-11):
 - Clocks: lease expiry with a clock 90 s ahead was already simulated
   (`sim/hub.py --docker --skew`); the dashboard shows a timestamp from the
   future as "now".
+
+## 0.12 · the dashboard in a window, everywhere
+
+Deliver: the four designs from the mock-ups (constellation for Windows, device
+map for macOS, lease heatmap for Linux, radar for Omarchy) as one program
+that runs on all three operating systems, with free licences and the least
+new code.
+
+Choice (2026-11-12): C# on Avalonia 12 (MIT). It reuses `Board` and
+`BoardFiles` from Sankofa.Core unchanged, so the folding rules are written
+once for the terminal and the window. It builds with the toolchain the daemon
+already needs (`dotnet`), as Native AOT on Linux and as one self-contained
+file for Windows and macOS cross-built from Linux (`make gui-dist`). The Qt
+window would have meant a second copy of the folding in C++, a Qt SDK on every
+build machine, and LGPL obligations to track when shipping. MAUI has no
+Linux. Electron, Tauri and Flutter would mean a second language.
+
+Tests: `tests/0.12/test_gui.sh`. The scene comes from the fixtures and from a
+live ledger the CLI writes. All 16 look and picture pairs are rendered
+headless to PNGs. The Omarchy look is checked by pixel against a theme file.
+`tests/0.1/test_install.sh` checks the launcher entry.
+
+So far (2026-11-12): built and passing `make test` on Linux. The
+Native AOT window is 20 MB beside Skia and HarfBuzz (13 MB together), answers
+`version` in about 14 ms, and renders one picture headless in about 120 ms.
+The self-contained single files for Windows, macOS and Linux arm64 are 47 to
+50 MB each (`make gui-dist`); they are built here and not yet run on those
+systems. `packaging/arch/PKGBUILD` builds and installs the window when the
+tree has it. The four pictures rendered from the fixtures are in
+`docs/images` (made by `sankofa-gui render`; the only images the repo keeps).
+Exit: run the window on a Windows and a macOS machine against a hub replica.
+
+## Security review (2026-11-12)
+
+Every shell script, the daemon, the hub, the gates, the MCP server, the bridge
+and the three dashboards were read for what text written by someone else can
+do: ledger lines, hook payloads, git output, handoff letters fetched from a
+remote, hub answers. `dotnet list package --vulnerable` is clean for every
+project. Fixed, each with a test (`tests/0.12/test_hostile_text.sh`,
+`GlobTests`, `MiniHttpTests`):
+
+- `pickup` built a sed program out of the letter and the tagger's name, both
+  fetched from the remote; a name with a slash could turn the letter into a
+  command. The open items are now parsed as data (awk, the name in the
+  environment), and letters, tagger names and `sankofa last` drop control
+  bytes before the terminal sees them. The same for every dashboard: text is
+  made printable, and the command a row offers to copy (`sankofa done <id>`,
+  `sankofa ask <path>`) quotes an id, glob or file name that is not plainly
+  safe.
+- `**` in a glob was matched by recursion, exponential in the number of `**`;
+  one claim could stall the daemon under its lock. The matcher now backs off
+  from the last `**` only (linear in glob times path).
+- A hub answer with a negative or giant Content-Length, or a bad chunk size,
+  threw on a pool thread and ended the device's daemon; the reader now refuses
+  it as an I/O fault (header lines over 64 KB and bodies over 64 MB too), and
+  a reconcile that fails is logged and trips the breaker.
+- A follow stream and the hub's event listing sent one page of 10,000 events
+  and then went live, so a replica away for longer kept a hole; both page
+  through the backlog.
+- The hub reads at most 16 MB of request body (413 above), clamps `last n`
+  to 200 (the MCP server too), and a queued line it cannot apply becomes a
+  flag instead of failing the batch.
+- The daemon refuses to put its socket in a directory it does not own
+  (`/tmp/sankofa-<user>` on a host without `XDG_RUNTIME_DIR` could be
+  pre-created by someone else).
+- Smaller: SQLite text is bound by byte count (an embedded NUL no longer makes
+  the row differ from the JSONL mirror); the pre-commit gate drains git's
+  stderr (a chatty git could hang the commit); `git fetch` gets `--` before
+  the remote name; the watcher's inotify mask has `IN_DONT_FOLLOW` and its
+  thread survives a failed scan; the MCP server kills a CLI call after 120 s
+  and caps output at 1 MB; `notify-send` gets `--` before the title;
+  `install.sh` keeps its settings backups at mode 600; the window clamps
+  `--size`.
+- Found by the new test: `sankofa open`, the handoff letter and the toasts
+  rendered text through jq's `@tsv`, which doubles every backslash, so a todo
+  with `\2` in it came out as `\\2` and as `\\\\2` after a pickup. They join
+  the fields with a tab instead.
+
+Noted and left as is: device tokens are attribution, not authorization (by
+design, see OBJECTIVE); the edit gate compares paths as spelled, so a symlinked
+parent is a different path (cooperative control); the git pre-commit gate
+skips when `sankofad` is not installed (documented); `git worktree list` is
+parsed by line, so a worktree path with a newline is dropped; the MCP `repo`
+argument may name any directory the user can read; the hub speaks plain HTTP
+and relies on the private network; the Qt window printed summaries raw and
+was dropped the same day (e202).
 
 ## Later / maybe
 

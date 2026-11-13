@@ -121,7 +121,7 @@ public sealed class Bridge : IDisposable
         var ok = new HashSet<string>(StringComparer.Ordinal);
         if (Git.Run(repo, "remote") is not { Ok: true } rs) return ok;
         foreach (var r in rs.Lines)
-            if (Git.RunTimed(repo, FetchTimeoutMs, "fetch", "--prune", "--quiet", "--no-tags", r,
+            if (Git.RunTimed(repo, FetchTimeoutMs, "fetch", "--prune", "--quiet", "--no-tags", "--", r,
                     $"+refs/sankofa/handoff/*:{HandoffPrefix}{r}/*", $"+refs/sankofa/taken/*:{TakenPrefix}{r}/*").Ok)
                 ok.Add(r);
         return ok;

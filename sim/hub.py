@@ -375,9 +375,9 @@ class Docker:
         self.skew, self.prefix, self.image = skew, f"sksim-{os.getpid()}", f"sankofa-sim:{os.getpid()}"
         for b in ("sankofad", "sankofa-mcp", "sankofa-hub"):
             if not os.access(os.path.join(ROOT, "bin", "out", b), os.X_OK): raise SystemExit(f"build first (make build): bin/out/{b}")
-        # the build context: the tracked files plus the built binaries (dashboard and docs left out)
+        # the build context: the tracked files plus the built binaries (docs left out)
         files = subprocess.run(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.split("\0")
-        files = [f for f in files if f and not f.startswith(("dashboard/", "docs/")) and os.path.isfile(os.path.join(ROOT, f))]
+        files = [f for f in files if f and not f.startswith("docs/") and os.path.isfile(os.path.join(ROOT, f))]
         files += [f"bin/out/{b}" for b in ("sankofad", "sankofa-mcp", "sankofa-hub")]
         ctx = os.path.join(tmp, "context")
         for f in files:

@@ -183,8 +183,8 @@ public sealed partial class Hub
             {
                 case "/v1/rpc" when req.HttpMethod == "POST":
                 {
-                    string body;
-                    using (var r = new StreamReader(req.InputStream, Encoding.UTF8)) body = await r.ReadToEndAsync(ct);
+                    var body = await ReadBody(req, ct);
+                    if (body is null) { await Reply(res, 413, "application/json", """{"ok":false,"error":"request body too large"}"""); return; }
                     Request? rq = null;
                     try { rq = JsonSerializer.Deserialize(body, Json.Wire.Request); } catch (JsonException) { }
                     var resp = rq is null ? Response.Fail("request is not JSON") : Rpc(rq, device);
@@ -259,12 +259,37 @@ public sealed partial class Hub
             await server.FollowAsync(new Request { Verb = "events", Repo = repo, Since = since ?? 0, Follow = true }, w, ct, Keepalive);
             return;
         }
-        foreach (var e in store.EventsSince(since ?? 0, repo))
+        long from = since ?? 0;
+        while (true)
         {
-            e.Repo = RepoName(e.Repo);
-            await w.WriteLineAsync(JsonSerializer.Serialize(e, Json.Wire.Entry));
+            var page = store.EventsSince(from, repo, Store.EventPage);
+            foreach (var e in page)
+            {
+                from = e.Seq ?? from;
+                e.Repo = RepoName(e.Repo);
+                await w.WriteLineAsync(JsonSerializer.Serialize(e, Json.Wire.Entry));
+            }
+            if (page.Count < Store.EventPage) break;
         }
         await w.FlushAsync(ct);
+    }
+
+    /// <summary>At most this many bytes of request body; a hub is one box for every device, and one device must not fill it.</summary>
+    internal const int MaxBody = 16 << 20;
+
+    /// <summary>The request body, or null when it is larger than <see cref="MaxBody"/>.</summary>
+    internal static async Task<string?> ReadBody(HttpListenerRequest req, CancellationToken ct)
+    {
+        if (req.ContentLength64 > MaxBody) return null;
+        using var ms = new MemoryStream();
+        var buf = new byte[16384];
+        int n;
+        while ((n = await req.InputStream.ReadAsync(buf, ct)) > 0)
+        {
+            if (ms.Length + n > MaxBody) return null;
+            ms.Write(buf, 0, n);
+        }
+        return Encoding.UTF8.GetString(ms.GetBuffer(), 0, (int)ms.Length);
     }
 
     static async Task Reply(HttpListenerResponse res, int code, string type, string body)

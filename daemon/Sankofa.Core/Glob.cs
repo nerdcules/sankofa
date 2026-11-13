@@ -20,23 +20,23 @@ public static class Glob
     public static bool HasWildcard(string g) => g.AsSpan().IndexOfAny('*', '?') >= 0;
 
     public static bool Match(string glob, string path) =>
-        MatchSegments(Normalize(glob).Split('/'), 0, Normalize(path).Split('/'), 0);
+        MatchSegments(Normalize(glob).Split('/'), Normalize(path).Split('/'));
 
-    static bool MatchSegments(string[] g, int gi, string[] p, int pi)
+    // Each ** is tried greedily and backed off from the last one only, so the work is bounded by
+    // segments of the glob times segments of the path. A matcher that recursed at every ** took
+    // time exponential in the number of ** segments, and a glob is whatever a session claims.
+    static bool MatchSegments(string[] g, string[] p)
     {
-        while (gi < g.Length)
+        int gi = 0, pi = 0, star = -1, mark = 0;
+        while (pi < p.Length)
         {
-            if (g[gi] == "**")
-            {
-                if (gi == g.Length - 1) return true;
-                for (int k = pi; k <= p.Length; k++)
-                    if (MatchSegments(g, gi + 1, p, k)) return true;
-                return false;
-            }
-            if (pi >= p.Length || !MatchSegment(g[gi], p[pi])) return false;
-            gi++; pi++;
+            if (gi < g.Length && g[gi] == "**") { star = gi++; mark = pi; }
+            else if (gi < g.Length && MatchSegment(g[gi], p[pi])) { gi++; pi++; }
+            else if (star >= 0) { gi = star + 1; pi = ++mark; }
+            else return false;
         }
-        return pi == p.Length;
+        while (gi < g.Length && g[gi] == "**") gi++;
+        return gi == g.Length;
     }
 
     static bool MatchSegment(string g, string s)

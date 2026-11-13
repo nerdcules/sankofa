@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The dashboard in a window, on Avalonia (MIT): Windows, macOS and Linux from one C# source,
+       sharing the Board the terminal dashboard folds the ledger with. A binary of its own, so
+       sankofad (also the per-edit gate) stays small. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>sankofa-gui</AssemblyName>
+    <RootNamespace>Sankofa.Gui</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- Native AOT where the host can build it (Linux from Linux); a self-contained single file
+         elsewhere (dotnet publish -r win-x64 / osx-arm64 -p:PublishAot=false). -->
+    <PublishAot Condition="'$(PublishAot)' == ''">true</PublishAot>
+    <StripSymbols>true</StripSymbols>
+    <!-- Sankofa.Core is marked Linux-only for the daemon's sockets and inotify; the window uses
+         only its ledger folding (Board, BoardFiles), which is plain .NET everywhere. -->
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <AssemblyAttribute Remove="System.Runtime.Versioning.SupportedOSPlatformAttribute" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Sankofa.Core/Sankofa.Core.csproj" />
+    <PackageReference Include="Avalonia" Version="12.1.6" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.6" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.6" />
+    <PackageReference Include="Avalonia.Headless" Version="12.1.6" />
+    <PackageReference Include="Avalonia.Skia" Version="12.1.6" />
+  </ItemGroup>
+</Project>

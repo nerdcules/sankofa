@@ -337,8 +337,11 @@ public sealed partial class Store : IDisposable
         }
     }
 
+    /// <summary>How many events one <see cref="EventsSince"/> call returns at most; readers that want them all page.</summary>
+    public const int EventPage = 10000;
+
     /// <summary>Events after a daemon-wide sequence number, optionally for one repo.</summary>
-    public List<Entry> EventsSince(long since, string? repo = null, int limit = 10000)
+    public List<Entry> EventsSince(long since, string? repo = null, int limit = EventPage)
     {
         lock (gate)
         {

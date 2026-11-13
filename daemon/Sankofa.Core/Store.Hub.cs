@@ -54,6 +54,9 @@ public sealed partial class Store
             SyncLocked(repo); ExpireDue(repo);
             foreach (var q in queued)
             {
+                // a queued line with no id or session is flagged below, not thrown at the whole batch
+                if (q.Id is null) throw new SankofaException($"{device} queued an entry with no id");
+                if (q.Session is null) q.Session = "";
                 var localId = q.Id;
                 if (ByNonce(repo, q.Nonce) is { } dup)
                 {
@@ -111,8 +114,10 @@ public sealed partial class Store
                             break;
                     }
                 }
-                catch (SankofaException ex)
+                catch (Exception ex) when (ex is SankofaException or SqliteException or ArgumentException or NullReferenceException)
                 {
+                    // one bad queued line (a missing field, a NULL where the schema wants text) must
+                    // not fail the batch: the device would re-send it all and double the rest
                     got = AppendLocked(repo, new Entry
                     {
                         Type = "flag", Session = q.Session, Agent = q.Agent, Ts = q.Ts, Nonce = q.Nonce,

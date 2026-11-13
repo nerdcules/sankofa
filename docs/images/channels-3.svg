@@ -1,0 +1,110 @@
+<svg color="#1B2430" font-family="'IBM Plex Sans','Segoe UI',system-ui,sans-serif" viewBox="0 0 1000 560" role="img" aria-label="Local agents write claims, notes and completions into a ledger daemon over a small CLI. Hook gates ask the daemon for a lease before any edit and require a report before any agent stops. A cloud session reaches the ledger only by pushing a branch that a remote bridge polls. Subscribers such as a notifier, dashboard and test runner read the daemon's event bus." xmlns="http://www.w3.org/2000/svg">
+<rect width="100%" height="100%" fill="#F5F7FA"/>
+<style>.mono { font-family:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,monospace; }</style>
+
+  <defs>
+    <marker id="c1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1B2430"/>
+    </marker>
+    <marker id="c2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0E7490"/>
+    </marker>
+  </defs>
+
+  <!-- Row 1: agents -->
+  <rect x="70" y="30" width="170" height="62" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-width="1.5"/>
+  <text x="155" y="56" text-anchor="middle" font-size="13.5" font-weight="600" fill="#1B2430">Main session</text>
+  <text x="155" y="76" text-anchor="middle" font-size="11" fill="#5E6B7A">stateless, as before</text>
+  <rect x="300" y="30" width="170" height="62" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-width="1.5"/>
+  <text x="385" y="56" text-anchor="middle" font-size="13.5" font-weight="600" fill="#1B2430">Subagent</text>
+  <text x="385" y="76" text-anchor="middle" font-size="11" fill="#5E6B7A">any depth</text>
+  <rect x="530" y="30" width="170" height="62" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-width="1.5"/>
+  <text x="615" y="56" text-anchor="middle" font-size="13.5" font-weight="600" fill="#1B2430">Teammate / peer</text>
+  <text x="615" y="76" text-anchor="middle" font-size="11" fill="#5E6B7A">other local session too</text>
+  <rect x="760" y="30" width="170" height="62" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-width="1.5"/>
+  <text x="845" y="56" text-anchor="middle" font-size="13.5" font-weight="600" fill="#1B2430">Cloud session</text>
+  <text x="845" y="76" text-anchor="middle" font-size="11" fill="#5E6B7A">cannot reach the socket</text>
+
+  <!-- Bus into daemon -->
+  <line x1="155" y1="92" x2="155" y2="140" stroke="#1B2430" stroke-width="1.5"/>
+  <line x1="385" y1="92" x2="385" y2="140" stroke="#1B2430" stroke-width="1.5"/>
+  <line x1="615" y1="92" x2="615" y2="140" stroke="#1B2430" stroke-width="1.5"/>
+  <line x1="155" y1="140" x2="615" y2="140" stroke="#1B2430" stroke-width="1.5"/>
+  <line x1="500" y1="140" x2="500" y2="220" stroke="#1B2430" stroke-width="1.5" marker-end="url(#c1)"/>
+  <text x="385" y="160" text-anchor="middle" font-size="11.5" class="mono" fill="#1B2430">claim · release · note · done · ask</text>
+  <text x="385" y="176" text-anchor="middle" font-size="11" fill="#5E6B7A">one small CLI, also served as an MCP tool</text>
+
+  <!-- Cloud path -->
+  <line x1="845" y1="92" x2="845" y2="220" stroke="#1B2430" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#c1)"/>
+  <text x="860" y="150" font-size="11.5" fill="#1B2430">git push</text>
+  <text x="860" y="166" font-size="11" fill="#5E6B7A">to a branch</text>
+
+  <!-- Row 2: gates, daemon, bridge -->
+  <rect x="40" y="220" width="270" height="130" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-width="1.5"/>
+  <text x="175" y="244" text-anchor="middle" font-size="13.5" font-weight="600" fill="#1B2430">Hook gates</text>
+  <text x="175" y="261" text-anchor="middle" font-size="11" fill="#5E6B7A">the only thing that can block an agent</text>
+  <text x="56" y="284" font-size="11" class="mono" fill="#1B2430">PreToolUse Edit  → holds a lease?</text>
+  <text x="56" y="302" font-size="11" class="mono" fill="#1B2430">SubagentStop     → report filed?</text>
+  <text x="56" y="320" font-size="11" class="mono" fill="#1B2430">Stop             → handoff note?</text>
+  <text x="56" y="338" font-size="11" class="mono" fill="#1B2430">TaskCompleted    → tests green?</text>
+
+  <rect x="370" y="220" width="260" height="130" rx="4" fill="#D8EEF4" stroke="#1B2430" stroke-width="1.5"/>
+  <text x="500" y="244" text-anchor="middle" font-size="14" font-weight="600" fill="#1B2430">Ledger daemon</text>
+  <text x="500" y="261" text-anchor="middle" font-size="11" fill="#5E6B7A">one process, Unix socket</text>
+  <text x="500" y="284" text-anchor="middle" font-size="11.5" class="mono" fill="#1B2430">SQLite · append-only events</text>
+  <text x="500" y="302" text-anchor="middle" font-size="11.5" class="mono" fill="#1B2430">leases on paths, with expiry</text>
+  <text x="500" y="320" text-anchor="middle" font-size="11.5" class="mono" fill="#1B2430">watches worktrees for overlap</text>
+  <text x="500" y="338" text-anchor="middle" font-size="11.5" fill="#B45309">records and answers, never decides</text>
+
+  <line x1="310" y1="275" x2="370" y2="275" stroke="#1B2430" stroke-width="1.5" marker-end="url(#c1)"/>
+  <line x1="370" y1="300" x2="310" y2="300" stroke="#0E7490" stroke-width="1.5" marker-end="url(#c2)"/>
+  <text x="340" y="268" text-anchor="middle" font-size="10.5" fill="#1B2430">ask</text>
+  <text x="340" y="316" text-anchor="middle" font-size="10.5" fill="#0E7490">ok / deny</text>
+
+  <rect x="720" y="220" width="250" height="130" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-width="1.5"/>
+  <text x="845" y="244" text-anchor="middle" font-size="13.5" font-weight="600" fill="#1B2430">Remote bridge</text>
+  <text x="845" y="261" text-anchor="middle" font-size="11" fill="#5E6B7A">the inbox for one-way routes</text>
+  <text x="845" y="284" text-anchor="middle" font-size="11.5" class="mono" fill="#1B2430">git fetch loop</text>
+  <text x="845" y="302" text-anchor="middle" font-size="11.5" class="mono" fill="#1B2430">routine + webhook runs</text>
+  <text x="845" y="320" text-anchor="middle" font-size="11.5" class="mono" fill="#1B2430">records what landed</text>
+
+  <line x1="720" y1="285" x2="630" y2="285" stroke="#1B2430" stroke-width="1.5" marker-end="url(#c1)"/>
+  <text x="675" y="278" text-anchor="middle" font-size="10.5" fill="#1B2430">events</text>
+
+  <!-- Gates to working trees -->
+  <line x1="175" y1="350" x2="175" y2="420" stroke="#0E7490" stroke-width="1.5" marker-end="url(#c2)"/>
+  <text x="190" y="390" font-size="11" fill="#0E7490">allowed edit</text>
+  <rect x="40" y="420" width="270" height="90" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-width="1.5"/>
+  <text x="175" y="444" text-anchor="middle" font-size="13.5" font-weight="600" fill="#1B2430">Working trees</text>
+  <text x="175" y="464" text-anchor="middle" font-size="11.5" class="mono" fill="#1B2430">wt/feature-a · wt/feature-b · wt/fix-c</text>
+  <text x="175" y="482" text-anchor="middle" font-size="11" fill="#5E6B7A">one per workstream; crossover becomes a merge,</text>
+  <text x="175" y="498" text-anchor="middle" font-size="11" fill="#5E6B7A">not an overwrite</text>
+
+  <!-- Event bus and subscribers -->
+  <line x1="500" y1="350" x2="500" y2="390" stroke="#1B2430" stroke-width="1.5"/>
+  <line x1="440" y1="390" x2="890" y2="390" stroke="#1B2430" stroke-width="1.5"/>
+  <text x="670" y="382" text-anchor="middle" font-size="11" fill="#5E6B7A">event bus: subscribe, never call each other</text>
+  <line x1="440" y1="390" x2="440" y2="420" stroke="#1B2430" stroke-width="1.5" marker-end="url(#c1)"/>
+  <line x1="665" y1="390" x2="665" y2="420" stroke="#1B2430" stroke-width="1.5" marker-end="url(#c1)"/>
+  <line x1="890" y1="390" x2="890" y2="420" stroke="#1B2430" stroke-width="1.5" marker-end="url(#c1)"/>
+
+  <rect x="360" y="420" width="160" height="90" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-width="1.5"/>
+  <text x="440" y="444" text-anchor="middle" font-size="13" font-weight="600" fill="#1B2430">Notifier</text>
+  <text x="440" y="464" text-anchor="middle" font-size="11" fill="#5E6B7A">desktop toast when a</text>
+  <text x="440" y="480" text-anchor="middle" font-size="11" fill="#5E6B7A">gate denies, a report</text>
+  <text x="440" y="496" text-anchor="middle" font-size="11" fill="#5E6B7A">lands, a branch arrives</text>
+
+  <rect x="585" y="420" width="160" height="90" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-width="1.5"/>
+  <text x="665" y="444" text-anchor="middle" font-size="13" font-weight="600" fill="#1B2430">Dashboard</text>
+  <text x="665" y="464" text-anchor="middle" font-size="11" fill="#5E6B7A">who holds what, what</text>
+  <text x="665" y="480" text-anchor="middle" font-size="11" fill="#5E6B7A">is open, last handoff</text>
+  <text x="665" y="496" text-anchor="middle" font-size="11" fill="#5E6B7A">per workstream</text>
+
+  <rect x="810" y="420" width="160" height="90" rx="4" fill="#FFFFFF" stroke="#1B2430" stroke-width="1.5"/>
+  <text x="890" y="444" text-anchor="middle" font-size="13" font-weight="600" fill="#1B2430">Test runner</text>
+  <text x="890" y="464" text-anchor="middle" font-size="11" fill="#5E6B7A">runs on task done or</text>
+  <text x="890" y="480" text-anchor="middle" font-size="11" fill="#5E6B7A">branch arrival, writes</text>
+  <text x="890" y="496" text-anchor="middle" font-size="11" fill="#5E6B7A">the result back as an event</text>
+
+  <text x="500" y="545" text-anchor="middle" font-size="11" fill="#5E6B7A">Agents stay stateless. The ledger holds the truth. The gates enforce it. Everything else subscribes.</text>
+</svg>

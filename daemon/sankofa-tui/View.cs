@@ -42,7 +42,7 @@ sealed class Snapshot
 
     public static string Name(string repo) => Path.GetFileName(repo.TrimEnd('/')) is { Length: > 0 } n ? n : repo;
     string In(string repo) => Many ? $"{Name(repo)}  " : "";
-    static string Flat(string s) => s.ReplaceLineEndings(" ");
+    static string Flat(string s) => Safe.Printable(s);   // one line, and no escape sequence from another writer reaches the terminal
     static string By(string who) => who.Length > 0 ? $"  ({who})" : "";
 
     // id and age first, then the text, the writer last: a narrow panel cuts the end, not the point
@@ -51,11 +51,11 @@ sealed class Snapshot
         : $"{i.Id,-5} {Ago(i.Ts),4}  {In(i.Repo)}{Flat(i.Text)}{By(i.Who)}";
 
     public string Row(Board.LeaseRow l) =>
-        $"{l.Id,-5} {(l.State == "held" ? "held" : "ended?"),-6}  {In(l.Repo)}{l.Glob}{By(l.Who)}";
+        $"{l.Id,-5} {(l.State == "held" ? "held" : "ended?"),-6}  {In(l.Repo)}{Flat(l.Glob)}{By(l.Who)}";
 
     public string Row(Board.Word w) => $"{Ago(w.Ts),4}  {In(w.Repo)}{(w.Who.Length > 0 ? w.Who : "you")}: {Flat(w.Text)}";
     public string Row(Board.Alert a) => $"{Ago(a.Ts),4}  {In(a.Repo)}{a.Type}: {Flat(a.Text)}";
 
     /// <summary>The CLI line a row stands for: what Space copies and what the Item menu runs.</summary>
-    public static string Command(Board.Item i) => i.Type == "handoff" ? $"sankofa pickup {i.Id}" : $"sankofa done {i.Id}";
+    public static string Command(Board.Item i) => (i.Type == "handoff" ? "sankofa pickup " : "sankofa done ") + Safe.ShellWord(i.Id);
 }

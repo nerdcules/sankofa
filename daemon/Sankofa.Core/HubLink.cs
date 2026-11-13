@@ -249,7 +249,16 @@ public sealed class HubLink : IDisposable
                 }
             }
         }
-        if (reconcile) ThreadPool.QueueUserWorkItem(_ => Reconcile(rep));
+        // on a pool thread an escaped exception ends the daemon; a hub answering nonsense is a fault to log
+        if (reconcile) ThreadPool.QueueUserWorkItem(_ =>
+        {
+            try { Reconcile(rep); }
+            catch (Exception ex) when (ex is IOException or JsonException or InvalidOperationException or ArgumentException)
+            {
+                Console.Error.WriteLine($"sankofad: reconcile for {rep.Root} failed: {ex.GetType().Name}: {ex.Message}");
+                Trip();
+            }
+        });
         else if (more) CatchUp(rep);
     }
 

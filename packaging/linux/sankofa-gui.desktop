@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Sankofa
+GenericName=AI session dashboard
+Comment=Who holds what, what is open, what waits on you, across your sankofa ledgers
+Exec=@BIN@/sankofa-gui
+Icon=utilities-system-monitor
+Terminal=false
+Categories=Development;Monitor;
+StartupWMClass=sankofa-gui

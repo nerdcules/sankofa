@@ -113,7 +113,7 @@ public sealed class MiniHttp : IDisposable
                 string piece;
                 if (chunked)
                 {
-                    var size = Convert.ToInt32(r.Line().Split(';')[0].Trim(), 16);
+                    var size = r.ChunkSize();
                     if (size == 0) return;
                     piece = Encoding.UTF8.GetString(r.Exactly(size));
                     r.Line();
@@ -139,9 +139,12 @@ public sealed class MiniHttp : IDisposable
     }
 
     /// <summary>Byte-level reading of one HTTP answer from a stream (blocking, honours the socket timeout).</summary>
-    sealed class Reader(NetworkStream s)
+    internal sealed class Reader(NetworkStream s)
     {
         public sealed class Closed() : IOException("the hub closed the connection");
+
+        // what the hub may send back before it is taken for a fault: a header line, one body
+        const int MaxLine = 64 * 1024, MaxBody = 64 << 20;
 
         readonly byte[] buf = new byte[16384];
         int pos, len;
@@ -161,12 +164,23 @@ public sealed class MiniHttp : IDisposable
                 if (!Fill()) { if (sb.Length == 0) throw new Closed(); throw new IOException("truncated answer"); }
                 byte b = buf[pos++];
                 if (b == '\n') return sb.ToString().TrimEnd('\r');
+                if (sb.Length >= MaxLine) throw new IOException("header line too long");
                 sb.Append((char)b);
             }
         }
 
+        /// <summary>A chunk size line; anything but a sane hex number is a fault, not a crash.</summary>
+        public int ChunkSize()
+        {
+            var l = Line().Split(';')[0].Trim();
+            if (l.Length is 0 or > 7 || !int.TryParse(l, System.Globalization.NumberStyles.HexNumber, null, out var size) || size < 0)
+                throw new IOException("bad chunk size");
+            return size;
+        }
+
         public byte[] Exactly(int n)
         {
+            if (n < 0 || n > MaxBody) throw new IOException($"answer of {n} bytes refused");
             var o = new byte[n];
             int got = 0;
             while (got < n)
@@ -206,8 +220,9 @@ public sealed class MiniHttp : IDisposable
                 var all = new List<byte>();
                 while (true)
                 {
-                    var size = Convert.ToInt32(Line().Split(';')[0].Trim(), 16);
+                    var size = ChunkSize();
                     if (size == 0) { while (Line().Length > 0) { } break; }
+                    if (all.Count + size > MaxBody) throw new IOException("answer too large");
                     all.AddRange(Exactly(size));
                     Line();
                 }

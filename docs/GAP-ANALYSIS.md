@@ -7,17 +7,18 @@ marked as such.
 
 | Need | Claude Code today | Other clients | Gap | sankofa part | Iter |
 |------|-------------------|---------------|-----|------------|------|
-| Durable handoff between sessions | Transcripts and `--resume`; subagent transcripts resumable by ID; 30-day retention | Varies; most keep a session log | State is inside transcripts, not readable without re-loading them; nothing cross-client | `sankofa note` + Stop/SubagentStop hooks writing `.sankofa/ledger.md` | 0.1 |
+| Durable handoff between sessions | Transcripts and `--resume`; subagent transcripts resumable by ID; 30-day retention | Varies; most keep a session log | State is inside transcripts, not readable without re-loading them; nothing cross-client | `sankofa note` + Stop/SubagentStop hooks writing `.sankofa/ledger.jsonl` | 0.1 |
 | Human queue ("awaiting sudo") | None | None | Nothing records what the human owes | `awaiting` event type, notifier | 0.1, 0.2 |
 | Surface events on the desktop | Notification hook (cannot block) | Varies | Only this client's events; no cross-client view | inotify/event-bus notifier → `notify-send` | 0.2 |
 | Ownership of paths | Team task list (by task, in prose); file locks on claims; lost on resume | None | No lease by path; nothing survives resume; single-client | `sankofad` leases with expiry, SQLite | 0.3 |
 | Block an edit on a leased path | PreToolUse hook can deny (exit 2) | Hook support varies; some notify-only | Enforcement differs per client; some have none | Bash hook adapter per client; git pre-commit as universal gate | 0.4 |
 | Require a report before an agent stops | SubagentStop can block; Stop can block | Varies | Only where the client supports it | Hook adapters; otherwise detection only | 0.4 |
-| Shared tool interface for any client | MCP supported | MCP widely supported | None once an MCP server exists | `sankofad --mcp` stdio server | 0.5 |
+| Shared tool interface for any client | MCP supported | MCP widely supported | None once an MCP server exists | `sankofad mcp` stdio server; the hub serves the same tools over HTTP | 0.5, 0.7 |
 | Detect overlap across worktrees | Worktree isolation on spawn | Varies | Isolation yes, detection no | inotify watcher in daemon, overlap event | 0.6 |
 | Learn that a cloud run landed | Cloud session cannot SendMessage back; routines run unattended | n/a | Nothing on the device notices | Remote bridge: fetch loop, records arrivals | 0.6 |
 | Same truth across devices | Cross-session messaging via Anthropic servers (text only, no state) | n/a | No shared state at all | HTTP hub on an always-on box, device tokens | 0.7 |
-| See the whole picture | None | None | No single view | Dashboard subscribing to events | 0.8 |
+| See the whole picture | None | None | No single view | Dashboards that follow the ledger files: the terminal (`sankofa dash`), a window on every OS (`--gui`) | 0.8, 0.10, 0.12 |
+| Hand a branch to a teammate | None | None | Credits or time run out mid-task; the context stays on one machine | `sankofa handoff` / `pickup` over the git remote (`refs/sankofa/*`) | 0.9 |
 
 ## What already works and sankofa must not duplicate
 

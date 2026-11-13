@@ -4,7 +4,7 @@
 . "$(dirname "$0")/../0.1/lib.sh"
 TUI=$ROOT/bin/out/sankofa-tui
 [ -x "$TUI" ] || fail "build sankofa-tui first (make build)"
-FX=$ROOT/dashboard/tests/fixtures
+FX=$ROOT/tests/fixtures
 export XDG_CONFIG_HOME=$T/config
 
 out=$("$TUI" summary "$FX/api.jsonl" "$FX/web.jsonl")
