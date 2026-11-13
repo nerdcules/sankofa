@@ -2,10 +2,35 @@ using System.Runtime.InteropServices;
 
 namespace Sankofa;
 
-/// <summary>Direct calls into the system libsqlite3. No ADO.NET: fewer moving parts, fast AOT start.</summary>
+/// <summary>
+/// Direct calls into the system's sqlite3. No ADO.NET: fewer moving parts, fast AOT start. The
+/// library is found by name per platform: libsqlite3.so.0 on Linux, libsqlite3.dylib on macOS
+/// (Apple ships it), and on Windows e_sqlite3.dll beside the binary (from the
+/// SQLitePCLRaw.lib.e_sqlite3 package for win-* builds), then sqlite3.dll, then the system's
+/// winsqlite3.dll.
+/// </summary>
 internal static partial class Native
 {
-    const string Lib = "libsqlite3.so.0";
+    const string Lib = "sqlite3";
+
+    static Native()
+    {
+        NativeLibrary.SetDllImportResolver(typeof(Native).Assembly, (name, asm, path) =>
+        {
+            if (name != Lib) return nint.Zero;
+            foreach (var c in Candidates())
+                if (NativeLibrary.TryLoad(c, asm, path, out var h)) return h;
+            return nint.Zero;   // the default probing then reports what it could not find
+        });
+    }
+
+    /// <summary>Library names to try, most specific first.</summary>
+    public static IEnumerable<string> Candidates()
+    {
+        if (OperatingSystem.IsWindows()) return ["e_sqlite3", "sqlite3", "winsqlite3"];
+        if (OperatingSystem.IsMacOS()) return ["libsqlite3.dylib", "/usr/lib/libsqlite3.dylib", "libsqlite3"];
+        return ["libsqlite3.so.0", "libsqlite3.so", "libsqlite3"];
+    }
     public const int OK = 0, ROW = 100, DONE = 101, NULL = 5, INTEGER = 1;
     public static readonly nint Transient = -1;
 
@@ -37,8 +62,9 @@ internal static partial class Native
 public sealed class SqliteException(string message) : Exception(message);
 
 /// <summary>
-/// An exclusive flock(2) on .sankofa/ledger.lock, the lock every ledger writer takes (the CLI
-/// fallback with flock(1), the gate, the daemon) while it picks the next id and appends.
+/// An exclusive lock on .sankofa/ledger.lock, the lock every ledger writer takes (the CLI, the
+/// gate, the daemon) while it picks the next id and appends. flock(2) on Linux and macOS; on
+/// Windows the file is opened with no sharing, which is the exclusive lock there.
 /// </summary>
 public static partial class LedgerLock
 {
@@ -48,16 +74,32 @@ public static partial class LedgerLock
     private static partial int open(string path, int flags, int mode);
     [LibraryImport("libc", SetLastError = true)] private static partial int flock(int fd, int operation);
     [LibraryImport("libc")] private static partial int close(int fd);
-    const int O_RDWR = 2, O_CREAT = 0x40, O_CLOEXEC = 0x80000, LOCK_EX = 2, EINTR = 4;
+    const int O_RDWR = 2, LOCK_EX = 2, EINTR = 4;
+    // open(2) flags differ between the two kernels
+    static readonly int O_CREAT = OperatingSystem.IsMacOS() ? 0x200 : 0x40;
+    static readonly int O_CLOEXEC = OperatingSystem.IsMacOS() ? 0x1000000 : 0x80000;
 
     public static IDisposable Acquire(string sankofaDir)
     {
         var path = Path.Combine(sankofaDir, "ledger.lock");
+        if (OperatingSystem.IsWindows()) return AcquireShared(path);
         int fd = open(path, O_RDWR | O_CREAT | O_CLOEXEC, 0b110_100_100);
         if (fd < 0) throw new IOException($"cannot open {path} (errno {Marshal.GetLastPInvokeError()})");
         while (flock(fd, LOCK_EX) != 0)
             if (Marshal.GetLastPInvokeError() != EINTR) { close(fd); throw new IOException($"cannot lock {path}"); }
         return new Held(fd);
+    }
+
+    /// <summary>Windows: whoever holds the file open with FileShare.None has the lock; the others wait.</summary>
+    internal static IDisposable AcquireShared(string path)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+        for (int i = 0; ; i++)
+        {
+            try { return new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
+            catch (IOException) when (DateTime.UtcNow < deadline) { Thread.Sleep(Math.Min(50, 2 + i)); }
+            catch (UnauthorizedAccessException) when (DateTime.UtcNow < deadline) { Thread.Sleep(Math.Min(50, 2 + i)); }
+        }
     }
 
     sealed class Held(int fd) : IDisposable
