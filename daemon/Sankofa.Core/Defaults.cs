@@ -59,12 +59,41 @@ public static class Defaults
     /// <summary>The repo root: the nearest directory at or above <paramref name="dir"/> holding .sankofa/.</summary>
     public static string? FindRoot(string dir)
     {
-        for (var d = Path.GetFullPath(dir); d is not null; d = Path.GetDirectoryName(d))
+        for (var d = Canonical(dir); d is not null; d = Path.GetDirectoryName(d))
         {
             if (Directory.Exists(Path.Combine(d, ".sankofa"))) return d;
             if (d == "/" || Path.GetPathRoot(d) == d) break;
         }
         return null;
+    }
+
+    [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "realpath", SetLastError = true)]
+    static extern nint RealPath([System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPUTF8Str)] string path, nint resolved);
+    [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "free")] static extern void Free(nint p);
+
+    /// <summary>
+    /// One spelling for a path, symlinks resolved, so the daemon keys a repo the same way whichever
+    /// way a client spelt it: the shell's logical cwd (/var/folders/... on macOS, /tmp -> /private/tmp)
+    /// against getcwd's physical one. The longest existing prefix is resolved; the rest is appended.
+    /// </summary>
+    public static string Canonical(string path)
+    {
+        var full = Path.GetFullPath(path);
+        if (OperatingSystem.IsWindows()) return full;
+        var rest = new Stack<string>();
+        for (var d = full; d is not null && d != "/"; d = Path.GetDirectoryName(d))
+        {
+            if (Directory.Exists(d) || File.Exists(d))
+            {
+                nint r = RealPath(d, nint.Zero);
+                if (r == nint.Zero) return full;
+                var real = System.Runtime.InteropServices.Marshal.PtrToStringUTF8(r) ?? d;
+                Free(r);
+                return rest.Count == 0 ? real : Path.Combine([real, .. rest]);
+            }
+            rest.Push(Path.GetFileName(d));
+        }
+        return full;
     }
 
     /// <summary>A key from .sankofa/config (key=value lines; last one wins).</summary>
