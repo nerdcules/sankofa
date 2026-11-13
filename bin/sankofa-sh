@@ -1,0 +1,1017 @@
+#!/bin/sh
+# sankofa - go back and fetch it.
+# The CLI. Writes go to sankofad when it answers on its socket; otherwise they are
+# appended to the repo's .sankofa/ledger.jsonl directly (the 0.1 ledger), and the
+# daemon imports them when it is back. Reads use ledger.jsonl, which the daemon mirrors.
+# POSIX sh + jq.
+set -eu
+
+VERSION=0.13.0
+
+usage() {
+  cat <<'USAGE'
+usage: sankofa <command> [args]
+
+  init                 create .sankofa/ in the current directory
+  setup                after a package install: wire the Claude Code hooks, the user
+                       services and the MCP registrations (runs install.sh)
+  note <text>          record what changed or was decided
+  todo <text>          record an open item (prints its id)
+  awaiting <text>      record an item that needs the human (prints its id)
+  done <id> [text]     resolve a todo or awaiting item, or finish a lease
+  handoff [text]       out of credits or time: push this branch and leave it for a teammate
+                       (text defaults to the last agent reply; open items go with it; the
+                       leases this session holds here are finished)
+  pickup [branch|id]   take a handoff: fetch, switch to its branch, print the letter
+                       (either one cut off halfway is finished by running it again)
+  claim <glob> [ttl]   lease paths (ttl like 90, 30m, 2h; default 30m); exit 2 if held
+  release <id>         give a lease up without finishing (its dirty mark stays)
+  ask <path>           who holds this path: held / free, plus half-finished edits
+  leases               live leases and ended ones still marked dirty
+  leases settle        finish ended dirty leases whose paths git shows clean (sankofad
+                       also does this every minute)
+  events [--follow] [--since N] [--all]   raw events from sankofad, one JSON per line;
+                       --follow alone streams new events, with --since it replays first
+  daemon               is sankofad answering?
+  open                 list unresolved items
+  last [n]             show the newest n entries (default 5)
+  log                  show the whole ledger
+  hook stop            Stop hook: reads hook JSON on stdin
+  hook subagent-stop   SubagentStop hook: records the report, finishes the subagent's leases
+  hook session-end     SessionEnd hook: finishes every lease the session holds
+  gate install [dir]   install the git pre-commit gate in a repo (uninstall, status)
+  trees on             watch this repo and all its git worktrees for overlaps
+  trees add <dir>...   also watch another checkout (a clone, or a worktree elsewhere)
+  trees [list]         the watched trees, their branches and how many paths each changed
+  trees scan           look for overlaps now (prints any recorded)
+  trees rm <dir>|off   stop watching one tree, or all of them
+  bridge on [interval] fetch the remotes every interval (default 5m); record a landed
+                       event for each remote branch that moved and is not your own push
+  bridge fetch         fetch now (prints any landed events)
+  bridge [status]|off
+  hub join <url> <token> [device]   connect this device to a hub (writes hub.conf)
+  hub on [name]        share this repo's ledger through the hub (name: default from the
+                       git remote, like github.com/you/repo; use the same name on every device)
+  hub off              stop; the replica is kept as .sankofa/ledger.hub.jsonl
+  hub [status]         online / offline, the hub name, writes queued while offline
+  dash [repo...]       the dashboard in the terminal (sankofa-tui): what waits on you,
+                       what is open, who holds what; menus, F1 for keys. Repos default to
+                       this one, else the watched ones. dash summary [--json] prints it;
+                       dash --gui opens it in a window (sankofa-gui: Windows, macOS, Linux)
+  watch add [dir]      toast this repo's awaiting, overlap and landed events (sankofa-watch)
+  watch list           show watched repos
+  watch rm [dir]       stop watching a repo
+  version
+
+Ledger: <repo>/.sankofa/ledger.jsonl, append-only.
+Config: <repo>/.sankofa/config, lines of key=value. Keys: require_note=0|1
+Env:    SANKOFA_REQUIRE_NOTE overrides require_note; SANKOFA_AGENT names the writer;
+        SANKOFA_SOCKET, SANKOFA_DAEMON_BIN locate sankofad; SANKOFA_NO_DAEMON=1 skips it.
+
+The Stop hook blocks (exit 2) only when all of these hold: require_note is on,
+the ledger has open items, and this session changed something it has not yet
+written up. "Changed" means an Edit/Write/MultiEdit/NotebookEdit call in the
+session transcript, or a different git working tree, since the session's own
+last ledger write. A reply that only answers a question is never blocked.
+USAGE
+}
+
+die() { printf 'sankofa: %s\n' "$*" >&2; exit 1; }
+
+SELF_DIR=$(dirname "$(readlink -f "$0")")
+
+find_root() {
+  d=$(pwd -P)
+  while :; do
+    if [ -d "$d/.sankofa" ]; then printf '%s' "$d"; return 0; fi
+    [ "$d" = / ] && return 1
+    d=$(dirname "$d")
+  done
+}
+
+need_root() {
+  ROOT=$(find_root) || die "no .sankofa/ here or above; run 'sankofa init' in the repo root"
+  LEDGER=$ROOT/.sankofa/ledger.jsonl
+  CONFIG=$ROOT/.sankofa/config
+  [ -f "$LEDGER" ] || : > "$LEDGER"
+}
+
+now() { # millisecond UTC timestamps, comparable with Claude Code transcript timestamps
+  t=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)
+  case $t in *N*) date -u +%Y-%m-%dT%H:%M:%SZ ;; *) printf '%s\n' "$t" ;; esac
+}
+
+# Fingerprint of the git working tree under $ROOT, ignoring .sankofa/. Prints - outside git.
+wt_fp() {
+  git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1 || { printf -; return 0; }
+  (
+    cd "$ROOT" || exit 0
+    x=':(exclude).sankofa'
+    git rev-parse -q --verify HEAD 2>/dev/null || :
+    if git rev-parse -q --verify HEAD >/dev/null 2>&1; then git diff HEAD -- . "$x"
+    else git diff --cached -- . "$x"; git diff -- . "$x"; fi
+    u=$(git ls-files -o --exclude-standard -- . "$x")
+    if [ -n "$u" ]; then printf '%s\n' "$u"; printf '%s\n' "$u" | git hash-object --stdin-paths; fi
+  ) 2>/dev/null | cksum | cut -d' ' -f1
+}
+session_id() { printf '%s' "${CLAUDE_CODE_SESSION_ID:-${CLAUDE_SESSION_ID:-${SANKOFA_SESSION:--}}}"; }
+agent_name() { printf '%s' "${SANKOFA_AGENT:-main}"; }
+# In a repo attached to a hub the ledger is the hub's replica: lines written here without the
+# daemon are queued for the hub and get ids of their own (q...), which the hub maps on return.
+next_id() {
+  if [ -n "$(cfg hub_repo "")" ]; then printf 'q%s%s' "$(date +%s%3N)" "$(( $$ % 1000 ))"
+  else printf 'e%s' "$(( $(wc -l < "$LEDGER") + 1 ))"; fi
+}
+client_name() { printf '%s' "${SANKOFA_CLIENT:-cli}"; }
+hub_conf() { printf '%s' "${SANKOFA_HUB_CONF:-${XDG_CONFIG_HOME:-$HOME/.config}/sankofa/hub.conf}"; }
+this_device() {
+  d=$(grep -E '^device=' "$(hub_conf)" 2>/dev/null | tail -n1 | cut -d= -f2-)
+  printf '%s' "${d:-$(uname -n)}"
+}
+
+# --- sankofad -------------------------------------------------------------------
+sock_path() {
+  # clients may start us with a minimal environment (Codex does for MCP servers), so when
+  # XDG_RUNTIME_DIR is unset use the directory systemd gives it: /run/user/<uid>
+  if [ -n "${SANKOFA_SOCKET:-}" ]; then printf '%s' "$SANKOFA_SOCKET"
+  elif [ -n "${XDG_RUNTIME_DIR:-}" ]; then printf '%s' "$XDG_RUNTIME_DIR/sankofa/sankofad.sock"
+  elif [ -d "/run/user/$(id -u)" ]; then printf '/run/user/%s/sankofa/sankofad.sock' "$(id -u)"
+  else printf '/tmp/sankofa-%s/sankofad.sock' "$(id -un)"; fi
+}
+daemon_bin() {
+  if [ -n "${SANKOFA_DAEMON_BIN:-}" ]; then printf '%s' "$SANKOFA_DAEMON_BIN"
+  elif [ -x "$SELF_DIR/out/sankofad" ]; then printf '%s' "$SELF_DIR/out/sankofad"
+  else command -v sankofad 2>/dev/null || return 1; fi
+}
+# dsend <json>: print the daemon's one-line answer. 0 ok, 1 refused, 3 no daemon,
+# 4 sent but unanswered (check the ledger for the request's nonce before writing again).
+dsend() {
+  [ "${SANKOFA_NO_DAEMON:-0}" = 1 ] && return 3
+  s=$(sock_path); [ -S "$s" ] || return 3
+  b=$(daemon_bin) || return 3
+  printf '%s' "$1" | "$b" send --socket "$s" 2>/dev/null
+}
+# dcall <json>: like dsend, sets DOUT and DRC instead of failing under set -e
+dcall() { set +e; DOUT=$(dsend "$1"); DRC=$?; set -e; }
+derr() { printf '%s' "$DOUT" | jq -r '.error // "sankofad refused the request"'; }
+new_nonce() { printf '%s-%s' "$(date +%s%N)" "$$"; }
+# id of the ledger line carrying this nonce, if the daemon wrote it before going away
+nonce_id() { jq -r --arg n "$1" 'select(.nonce == $n) | .id' "$LEDGER" 2>/dev/null | tail -n1; }
+# repo-relative form of a path given relative to the current directory
+repo_rel() {
+  case $1 in
+    /*) p=${1#"$ROOT"}; p=${p#/} ;;
+    *) here=$(pwd -P); sub=${here#"$ROOT"}; sub=${sub#/}; p=${sub:+$sub/}$1 ;;
+  esac
+  printf '%s' "${p:-.}"
+}
+ttl_secs() {
+  case $1 in
+    *[!0-9smhd]*|"") die "bad ttl '$1' (use 90, 30m, 2h, 1d)" ;;
+    *d) echo $(( ${1%d} * 86400 )) ;; *h) echo $(( ${1%h} * 3600 )) ;;
+    *m) echo $(( ${1%m} * 60 )) ;; *s) echo "${1%s}" ;; *) echo "$1" ;;
+  esac
+}
+
+cfg() { # cfg key default
+  v=""
+  [ -f "$CONFIG" ] && v=$(grep -E "^$1=" "$CONFIG" 2>/dev/null | tail -n1 | cut -d= -f2-)
+  printf '%s' "${v:-$2}"
+}
+
+# append type text [ref] [session] [agent]: through sankofad if it answers, else locally
+append() {
+  wt=$(wt_fp); nonce=$(new_nonce)
+  req=$(jq -nc --arg repo "$ROOT" --arg type "$1" --arg text "$2" --arg ref "${3:-}" \
+    --arg session "${4:-$(session_id)}" --arg agent "${5:-$(agent_name)}" --arg wt "$wt" --arg nonce "$nonce" \
+    --arg client "$(client_name)" --arg branch "${A_BRANCH:-}" --arg sha "${A_SHA:-}" --arg letter "${A_LETTER:-}" \
+    '{verb:"append",repo:$repo,type:$type,text:$text,session:$session,agent:$agent,nonce:$nonce,client:$client}
+     + (if $ref != "" then {ref:$ref} else {} end) + (if $wt != "-" then {wt:$wt} else {} end)
+     + (if $branch != "" then {branch:$branch,sha:$sha} else {} end) + (if $letter != "" then {letter:$letter} else {} end)')
+  dcall "$req"
+  case $DRC in
+    0) printf '%s' "$DOUT" | jq -r .id; return 0 ;;
+    4) got=$(nonce_id "$nonce"); if [ -n "$got" ]; then printf '%s\n' "$got"; return 0; fi
+       local_append "$1" "$2" "${3:-}" "${4:-}" "${5:-}" "$wt" "$nonce" ;;
+    3) local_append "$1" "$2" "${3:-}" "${4:-}" "${5:-}" "$wt" "$nonce" ;;
+    *) die "$(derr)" ;;
+  esac
+}
+
+# local_append type text [ref] [session] [agent] [wt] [nonce]: the 0.1 path, no daemon
+local_append() {
+  # the same lock sankofad and the gate take, so concurrent writers never pick the same id
+  locked=0
+  if command -v flock >/dev/null 2>&1; then exec 9>>"$ROOT/.sankofa/ledger.lock"; flock 9; locked=1; fi
+  id=$(next_id)
+  jq -nc \
+    --arg ts "$(now)" --arg id "$id" --arg type "$1" --arg text "$2" \
+    --arg ref "${3:-}" --arg session "${4:-$(session_id)}" --arg agent "${5:-$(agent_name)}" \
+    --arg wt "${6:-$(wt_fp)}" --arg nonce "${7:-}" --arg branch "${A_BRANCH:-}" --arg sha "${A_SHA:-}" --arg letter "${A_LETTER:-}" \
+    '{ts:$ts,id:$id,type:$type,session:$session,agent:$agent,text:$text}
+     + (if $ref != "" then {ref:$ref} else {} end)
+     + (if $branch != "" then {branch:$branch,sha:$sha} else {} end) + (if $letter != "" then {letter:$letter} else {} end)
+     + (if $wt != "-" then {wt:$wt} else {} end)
+     + (if $nonce != "" then {nonce:$nonce} else {} end)' >> "$LEDGER"
+  [ "$locked" = 1 ] && { flock -u 9; exec 9>&-; }
+  printf '%s\n' "$id"
+}
+
+open_items() { # id \t type \t ts \t text
+  jq -rs '
+    ([.[] | select(.type=="done") | .ref]) as $done
+    | .[]
+    | select((.type=="todo" or .type=="awaiting" or .type=="handoff") and (IN(.id; $done[]) | not))
+    | [.id, .type, .ts, (.text | gsub("[\t\n\r]"; " "))] | join("\t")' "$LEDGER"
+}
+
+# Drops control bytes (escape sequences included) so text written by someone else cannot drive the terminal.
+printable() { tr -d '\000-\010\013-\037\177'; }
+render() { jq -r '"\(.ts)  \(.id)  \(.type)\t[\(.agent)\(if .device then "@\(.device)" else "" end)]  \(.text)\(if .ref then "  (\(.ref))" else "" end)"' | printable; }
+
+item_exists() { jq -e --arg id "$1" 'select(.id==$id and (.type=="todo" or .type=="awaiting" or .type=="handoff" or .type=="claim"))' "$LEDGER" >/dev/null 2>&1; }
+# a claim with no done yet (whether it is still live is the daemon's call; it applies the done on import)
+lease_unfinished() { jq -se --arg id "$1" 'any(.[]; .id==$id and .type=="claim") and (any(.[]; .type=="done" and .ref==$id) | not)' "$LEDGER" >/dev/null 2>&1; }
+
+cmd_init() {
+  [ -d .sankofa ] && { echo "sankofa: .sankofa/ already exists"; exit 0; }
+  mkdir .sankofa
+  : > .sankofa/ledger.jsonl
+  printf 'require_note=1\n' > .sankofa/config
+  echo "sankofa: initialised .sankofa/ (ledger.jsonl, config)"
+}
+
+cmd_note()     { [ $# -ge 1 ] || die "note needs text"; need_root; append note "$*" >/dev/null; }
+cmd_todo()     { [ $# -ge 1 ] || die "todo needs text"; need_root; append todo "$*"; }
+cmd_awaiting() { [ $# -ge 1 ] || die "awaiting needs text"; need_root; append awaiting "$*"; }
+
+cmd_done() {
+  [ $# -ge 1 ] || die "done needs an id"
+  need_root
+  id=$1; shift
+  nonce=$(new_nonce)
+  dcall "$(jq -nc --arg repo "$ROOT" --arg ref "$id" --arg text "${*:-resolved}" --arg session "$(session_id)" \
+            --arg agent "$(agent_name)" --arg nonce "$nonce" --arg client "$(client_name)" \
+            '{verb:"done",repo:$repo,ref:$ref,text:$text,session:$session,agent:$agent,nonce:$nonce,client:$client}')"
+  case $DRC in
+    0) return 0 ;;
+    4) [ -n "$(nonce_id "$nonce")" ] && return 0 ;;
+    3) ;;
+    *) die "$(derr)" ;;
+  esac
+  item_exists "$id" || die "no open item with id $id"
+  if open_items | cut -f1 | grep -qx "$id" || lease_unfinished "$id"; then
+    local_append done "${*:-resolved}" "$id" "" "" "" "$nonce" >/dev/null
+  else
+    die "$id is already resolved"
+  fi
+}
+
+cmd_open() {
+  need_root
+  for j in handoff pickup; do
+    [ -f "$ROOT/.sankofa/$j.json" ] || continue
+    w=$(jq -r 'if .rb then .rb else (.b | sub("^[^/]*/"; "")) end' "$ROOT/.sankofa/$j.json" 2>/dev/null || echo ?)
+    printf 'the %s of %s was interrupted; run sankofa %s again to finish it\n' "$j" "$w" "$j"
+  done
+  out=$(open_items)
+  if [ -z "$out" ]; then echo "no open items"; return 0; fi
+  printf '%s\n' "$out" | awk -F'\t' '{ printf "%-5s %-9s %s  %s\n", $1, $2, $3, $4 }'
+}
+
+# --- handoff ---------------------------------------------------------------------
+# A handoff is a branch and a letter. The branch is pushed; the letter (the text plus the open
+# items) travels as a tag object at refs/sankofa/handoff/<branch> on the same remote, so a
+# teammate with nothing but the git remote can pick it up, and as a handoff event in the ledger,
+# which a hub shares. pickup takes it: switches to the branch and removes the ref from the
+# remote, which tells the sender's bridge (and anyone else's) that it was taken.
+HX=':(exclude).sankofa'
+TAB=$(printf '\t')
+git_here() { git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1 || die "$1 needs a git repository"; cd "$ROOT"; }
+no_changes() {
+  ch=$(git status --porcelain --untracked-files=no -- . "$HX")
+  [ -z "$ch" ] || die "$1
+$ch"
+}
+
+# A handoff or pickup that dies halfway (a killed session, a dropped connection) is finished by
+# running it again: each keeps a journal in .sankofa/ while it runs, and sankofa open reports one
+# left behind. The remote decides who has a handoff: pickup removes the letter and, in the same
+# atomic push, leaves a marker at refs/sankofa/taken/<branch> naming it, so either side can tell
+# afterwards whether a letter it lost track of was taken or never arrived.
+JH=.sankofa/handoff.json
+JP=.sankofa/pickup.json
+jput() { printf '%s\n' "$2" > "$1.tmp" && mv -f "$1.tmp" "$1"; }
+jget() { jq -r --arg k "$2" '.[$k] // ""' "$1"; }
+# rref <remote> <ref>...: the remote's object id for each named ref (one line per ref, empty if
+# it has none); fails when the remote cannot be asked, which is not the same as having none
+rref() {
+  r=$1; shift
+  out=$(git ls-remote "$r" "$@" 2>/dev/null) || return 1
+  for x in "$@"; do printf '%s\n' "$out" | awk -v r="$x" '$2 == r { print $1 }' | head -n1 | grep . || echo; done
+}
+# who took letter <tag> of <rb> from <remote>, by the marker there; empty when it was not taken
+taken_by() {
+  [ -n "$4" ] || return 0
+  git fetch -q --no-tags "$1" "refs/sankofa/taken/$2" 2>/dev/null || return 0
+  [ "$(git rev-parse FETCH_HEAD)" = "$4" ] || return 0
+  [ "$(git cat-file tag FETCH_HEAD | sed -n '1s/^object //p')" = "$3" ] || return 0
+  git cat-file tag FETCH_HEAD | sed -n 's/^tagger \(.*\) <.*/\1/p'
+}
+
+# offer the letter in the journal unless it was taken meanwhile, record it, drop the journal
+finish_handoff() {
+  remote=$(jget "$JH" remote); rb=$(jget "$JH" rb); sha=$(jget "$JH" sha); tag=$(jget "$JH" tag)
+  old=$(jget "$JH" old); text=$(jget "$JH" text)
+  st=$(rref "$remote" "refs/sankofa/handoff/$rb" "refs/sankofa/taken/$rb") ||
+    die "cannot reach $remote to finish the handoff of $rb; run sankofa handoff again when it answers"
+  now=$(printf '%s\n' "$st" | sed -n 1p); mk=$(printf '%s\n' "$st" | sed -n 2p)
+  by=
+  if [ "$now" = "$tag" ]; then :
+  elif by=$(taken_by "$remote" "$rb" "$tag" "$mk" | printable) && [ -n "$by" ]; then :
+  elif [ "$now" = "$old" ] || [ -z "$now" ]; then
+    # --force-with-lease: replace only what was there when this handoff began (nothing, or
+    # this branch's previous letter), never a letter someone else wrote meanwhile
+    if ! err=$(git push -q "--force-with-lease=refs/sankofa/handoff/$rb:$now" "$remote" "$tag:refs/sankofa/handoff/$rb" 2>&1); then
+      st=$(rref "$remote" "refs/sankofa/handoff/$rb") || st=
+      if [ "$st" != "$tag" ]; then
+        [ -n "$(cfg hub_repo "")" ] || die "the branch is pushed, but $remote refused refs/sankofa/handoff/$rb: $err"
+        echo "sankofa: $remote refused the handoff ref; the hub ledger carries the handoff" >&2
+      fi
+    fi
+  else
+    rm -f "$JH"; die "$rb was handed off again by someone else meanwhile; this handoff is dropped"
+  fi
+  id=$(jq -r --arg l "$tag" 'select(.type=="handoff" and .letter==$l) | .id' "$LEDGER" | tail -n1)
+  [ -n "$id" ] || id=$(A_BRANCH="$remote/$rb" A_SHA=$sha A_LETTER=$tag append handoff "$text")
+  rm -f "$JH"
+  # this branch's earlier handoffs from here are replaced by this one (a hub ledger keeps them
+  # open otherwise; without a hub the bridge closes them when it sees the letter replaced)
+  me=$(this_device)
+  for o in $(open_items | awk -F'\t' '$2 == "handoff" { print $1 }'); do
+    [ "$o" != "$id" ] || continue
+    jq -e --arg id "$o" --arg b "$remote/$rb" --arg me "$me" --arg old "$old" \
+      'select(.id==$id and .branch==$b and (.letter == $old or (.device // "") == $me or (.device == null and .session != "sankofad")))' \
+      "$LEDGER" >/dev/null 2>&1 && { (cmd_done "$o" "superseded by $id") >/dev/null 2>&1 || :; }
+  done
+  # the work is the teammate's now: the leases this session holds here would only block them
+  # (through a hub, on every device) until they expired
+  dcall "$(jq -nc --arg repo "$ROOT" --arg session "$(session_id)" --arg text "handed off as $id" '{verb:"finish",repo:$repo,session:$session,text:$text}')"
+  [ "$DRC" != 0 ] || { n=$(printf '%s' "$DOUT" | jq '.entries // [] | length'); [ "$n" = 0 ] || echo "sankofa: finished $n lease(s) this session held here" >&2; }
+  if [ -n "$by" ]; then
+    (cmd_done "$id" "picked up by $by") >/dev/null 2>&1 || :
+    printf 'handed off %s at %s; %s has picked it up already  %s\n' "$rb" "$(git rev-parse --short "$sha")" "$by" "$id"
+    return 0
+  fi
+  printf 'handed off %s at %s (pushed to %s)  %s\n' "$rb" "$(git rev-parse --short "$sha")" "$remote" "$id"
+  printf 'on the other machine: sankofa pickup %s\n' "$rb"
+}
+
+cmd_handoff() {
+  need_root; git_here handoff
+  br=$(git symbolic-ref -q --short HEAD) || die "not on a branch; switch to the branch to hand off"
+  remote=$(git config "branch.$br.remote" || :); rb=$(git config "branch.$br.merge" || :); rb=${rb#refs/heads/}
+  setup=
+  if [ -z "$remote" ] || [ "$remote" = . ]; then
+    remote=$(git remote | grep -x origin || :); rb=$br; setup=-u
+    if [ -z "$remote" ]; then
+      [ "$(git remote | grep -c .)" -le 1 ] || die "$br tracks no remote and there are several; push it to the one to hand off through first (git push -u <remote> $br)"
+      remote=$(git remote)
+    fi
+    [ -n "$remote" ] || die "no git remote to hand off through (git remote add origin <url>)"
+  fi
+  if [ -f "$JH" ]; then
+    if [ "$(jget "$JH" stage)" = letter ]; then
+      jr=$(jget "$JH" rb); js=$(jget "$JH" sha)
+      echo "sankofa: finishing the handoff of $jr that was interrupted" >&2
+      finish_handoff
+      [ "$jr" != "$rb" ] || [ "$js" != "$(git rev-parse HEAD)" ] || return 0
+    elif [ "$(jget "$JH" rb)" != "$rb" ]; then
+      die "the handoff of $(jget "$JH" rb) was interrupted before its letter was written; switch to it and run sankofa handoff again"
+    fi
+  fi
+  no_changes "commit first; these changes would stay behind on this machine:"
+  un=$(git ls-files -o --exclude-standard -- . "$HX")
+  [ -z "$un" ] || printf 'sankofa: untracked files stay here: %s\n' "$(printf '%s' "$un" | head -n3 | tr '\n' ' ')" >&2
+  sha=$(git rev-parse HEAD)
+  jput "$JH" "$(jq -nc --arg remote "$remote" --arg rb "$rb" --arg sha "$sha" '{stage:"branch",remote:$remote,rb:$rb,sha:$sha}')"
+  # the teammate gets the remote branch: it must not have commits this one lacks
+  if git fetch -q "$remote" "refs/heads/$rb" 2>/dev/null && ! git merge-base --is-ancestor FETCH_HEAD HEAD; then
+    rm -f "$JH"; die "$remote/$rb has commits this branch does not; pull them first"
+  fi
+  old=$(rref "$remote" "refs/sankofa/handoff/$rb") || { rm -f "$JH"; die "cannot reach $remote"; }
+  # the same handoff again (run twice, or again after a crash that came after it was finished)
+  # changes nothing: same commit, same letter text, still on offer
+  # (through a hub whose remote refuses the letter, the ledger alone says it is on offer)
+  last=$(git rev-parse -q --verify "refs/sankofa/handoff/$rb" || :)
+  if [ -n "$last" ] && [ "$(git rev-parse "$last^{commit}")" = "$sha" ] &&
+     { [ "$old" = "$last" ] || { [ -z "$old" ] && [ -n "$(cfg hub_repo "")" ] && open_items | cut -f1 | grep -qxF \
+         "$(jq -r --arg l "$last" 'select(.type=="handoff" and .letter==$l) | .id' "$LEDGER" | tail -n1)"; }; }; then
+    prev=$(jq -r --arg l "$last" 'select(.type=="handoff" and .letter==$l) | "\(.id)\t\(.text)"' "$LEDGER" | tail -n1)
+    if [ -n "$prev" ] && { [ -z "$*" ] || [ "${prev#*"$TAB"}" = "$*" ]; }; then
+      rm -f "$JH"
+      printf 'already handed off %s at %s  %s\n' "$rb" "$(git rev-parse --short "$sha")" "${prev%%"$TAB"*}"
+      printf 'on the other machine: sankofa pickup %s\n' "$rb"
+      return 0
+    fi
+  fi
+  git push -q $setup "$remote" "HEAD:refs/heads/$rb" || die "git push to $remote failed; run sankofa handoff again"
+  text=$*
+  [ -n "$text" ] || text=$(jq -rs 'map(select(.type=="stop" and .text != "")) | last | .text // empty' "$LEDGER")
+  [ -n "$text" ] || { rm -f "$JH"; die "handoff needs text: what is done, what is next"; }
+  items=$(open_items | awk -F'\t' '$2 != "handoff" { printf "- %s %s: %s\n", $1, $2, $4 }')
+  msg=$text; [ -z "$items" ] || msg="$text
+
+Open items:
+$items"
+  tag=$(printf 'object %s\ntype commit\ntag handoff/%s\ntagger %s\n\n%s\n' "$sha" "$rb" "$(git var GIT_COMMITTER_IDENT)" "$msg" |
+        git hash-object -t tag -w --stdin) || die "could not write the handoff letter"
+  # this machine's own letters are known by this ref, whatever the ledger says
+  git update-ref "refs/sankofa/handoff/$rb" "$tag"
+  jput "$JH" "$(jq -nc --arg remote "$remote" --arg rb "$rb" --arg sha "$sha" --arg tag "$tag" --arg old "$old" --arg text "$text" \
+    '{stage:"letter",remote:$remote,rb:$rb,sha:$sha,tag:$tag,old:$old,text:$text}')"
+  finish_handoff
+}
+
+# handoffs on offer, one per line: remote/branch TAB sha TAB ledger id (or -); never this machine's own
+handoffs() {
+  me=$(this_device)
+  # this machine's own handoffs, by letter (the same commit may come back in someone else's letter):
+  # the ones in the ledger and the ones git knows it wrote, which a crash may have kept from the ledger
+  mine=$( { jq -r --arg me "$me" 'select(.type=="handoff" and ((.device // "") == $me or (.device == null and .session != "sankofad"))) | .letter // .sha' "$LEDGER"
+            git for-each-ref --format='%(objectname)' refs/sankofa/handoff; } | sort -u)
+  hub=0; [ -n "$(cfg hub_repo "")" ] && hub=1
+  # letters a shared ledger says were picked up (the remote's copy may be one a crash left behind)
+  gone=$(jq -rs '([.[] | select(.type=="done") | .ref]) as $d | .[] | select(.type=="handoff" and .letter != null and IN(.id; $d[])) | .letter' "$LEDGER")
+  [ "$hub" = 1 ] || gone=
+  # each line: branch, sha, ledger id or -, g (git has the letter) or l (only the ledger), letter
+  { for hid in $(open_items | awk -F'\t' '$2 == "handoff" { print $1 }'); do
+      jq -r --arg id "$hid" 'select(.id==$id) | "\(.branch)\t\(.sha)\t\(.id)\tl\t\(.letter // .sha)"' "$LEDGER"
+    done
+    git for-each-ref --format='%(refname:strip=3)%09%(objectname)' refs/sankofa/remote | while IFS="$TAB" read -r b t; do
+      printf '%s\t%s\t-\tg\t%s\n' "$b" "$(git rev-parse "$t^{commit}")" "$t"
+    done
+  } | awk -F'\t' -v mine="$mine" -v gone="$gone" -v hub="$hub" '
+      BEGIN { n = split(mine, m, "\n"); for (i = 1; i <= n; i++) skip[m[i]] = 1
+              n = split(gone, m, "\n"); for (i = 1; i <= n; i++) taken[m[i]] = 1 }
+      $5 in skip || $2 in skip { next }
+      $4 == "g" && $5 in taken { next }
+      { k = $1 FS $2; if (!(k in seen)) { seen[k] = 1; order[++c] = k }; if ($3 != "-") id[k] = $3; if ($4 == "g") git[k] = 1 }
+      # without a hub the letter on the remote is the offer: a ledger copy without one was taken already
+      END { for (i = 1; i <= c; i++) if (hub || (order[i] in git)) print order[i] FS (order[i] in id ? id[order[i]] : "-") }'
+}
+
+# the handoff was taken but git would not switch after all: offer it again, as it was
+switch_failed() {
+  [ -z "$tag" ] || git push -q "$remote" "$tag:refs/sankofa/handoff/$rb" 2>/dev/null || :
+  [ "$hid" = - ] || A_BRANCH=$b A_SHA=$sha A_LETTER=$tag append handoff "$letter" >/dev/null || :
+  rm -f "$JP"
+  die "could not switch to $rb, so the handoff is offered again: $1"
+}
+
+# load the pickup journal into b sha tip hid tag mark who letter remote rb
+pickup_vars() {
+  b=$(jget "$JP" b); sha=$(jget "$JP" sha); tip=$(jget "$JP" tip); hid=$(jget "$JP" hid); tag=$(jget "$JP" tag)
+  mark=$(jget "$JP" mark); who=$(jget "$JP" who); letter=$(jget "$JP" letter); remote=${b%%/*}; rb=${b#*/}
+}
+
+# the claim: take the handoff in the journal, or find out that someone else did. Returns 0 when it is ours.
+claim_handoff() {
+  hub=; [ -n "$(cfg hub_repo "")" ] && hub=1
+  mine="picked up on $(this_device) at $(git rev-parse --short "$sha")"
+  if [ -n "$tag" ]; then
+    # one atomic push removes the letter (only if it is still the one we saw) and leaves the marker
+    if ! perr=$(git push -q --atomic "--force-with-lease=refs/sankofa/handoff/$rb:$tag" "$remote" \
+         ":refs/sankofa/handoff/$rb" "+$mark:refs/sankofa/taken/$rb" 2>&1); then
+      st=$(rref "$remote" "refs/sankofa/handoff/$rb" "refs/sankofa/taken/$rb") ||
+        die "cannot reach $remote; run sankofa pickup again to finish taking $rb"
+      now=$(printf '%s\n' "$st" | sed -n 1p); mk=$(printf '%s\n' "$st" | sed -n 2p)
+      if [ "$mk" != "$mark" ]; then
+        if [ "$now" = "$tag" ]; then
+          # the letter is there and still ours to take. A server that cannot take both refs at once,
+          # or will not keep the marker, says so: then removing the letter alone is still a claim.
+          # Anything else (the connection) is for running pickup again; the journal says where it got to
+          case $perr in *atomic*|*"refs/sankofa/taken/$rb ("*) ;; *) die "could not take $rb from $remote: ${perr:-push failed}; run sankofa pickup again" ;; esac
+          git push -q "--force-with-lease=refs/sankofa/handoff/$rb:$tag" "$remote" ":refs/sankofa/handoff/$rb" 2>/dev/null ||
+            { [ -n "$hub" ] || { rm -f "$JP"; die "$remote refused removing refs/sankofa/handoff/$rb, so the handoff cannot be taken"; }; }
+        else
+          rm -f "$JP"; git update-ref -d "refs/sankofa/remote/$b" 2>/dev/null || :
+          [ -z "$now" ] && die "someone else picked up $rb first"
+          die "$rb was handed off again meanwhile; run sankofa pickup again"
+        fi
+      fi
+    fi
+    git update-ref -d "refs/sankofa/remote/$b" 2>/dev/null || :
+  fi
+  if [ -z "$tag" ] && [ "$hid" != - ]; then
+    # only the ledger offers it: if the remote has its letter's marker, someone took it through
+    # git and their done has not reached this ledger yet
+    l=$(jq -r --arg id "$hid" 'select(.id==$id) | .letter // empty' "$LEDGER" | tail -n1)
+    if [ -n "$l" ] && mk=$(rref "$remote" "refs/sankofa/taken/$rb") && by=$(taken_by "$remote" "$rb" "$l" "$mk") && [ -n "$by" ]; then
+      rm -f "$JP"; die "$by picked up $rb first"
+    fi
+  fi
+  if [ "$hid" != - ] && ! (cmd_done "$hid" "$mine") 2>/dev/null; then
+    # already done: by this pickup before it was interrupted, or (through a hub) by someone else
+    d=$(jq -rs --arg id "$hid" 'map(select(.type=="done" and .ref==$id)) | first | .text // ""' "$LEDGER")
+    if [ -n "$hub" ] && [ -z "$tag" ] && [ "$d" != "$mine" ]; then rm -f "$JP"; die "someone else picked up $rb first"; fi
+  fi
+}
+
+cmd_pickup() {
+  need_root; git_here pickup
+  no_changes "commit or stash first; pickup switches branches:"
+  for r in $(git remote); do
+    git fetch -q --prune --no-tags "$r" "+refs/heads/*:refs/remotes/$r/*" "+refs/sankofa/handoff/*:refs/sankofa/remote/$r/*" ||
+      echo "sankofa: could not fetch $r" >&2
+  done
+  if [ -f "$JP" ]; then
+    pickup_vars
+    echo "sankofa: finishing the pickup of $rb that was interrupted" >&2
+    [ "$(jget "$JP" stage)" = claimed ] || { claim_handoff; jput "$JP" "$(jq -c '.stage = "claimed"' "$JP")"; }
+  else
+    list=$(handoffs)
+    if [ $# -gt 0 ]; then
+      list=$(printf '%s\n' "$list" | awk -F'\t' -v a="$1" '$3 == a || $1 == a || substr($1, index($1, "/") + 1) == a')
+    fi
+    n=$(printf '%s' "$list" | grep -c . || :)
+    if [ "$n" -eq 0 ]; then echo "nothing handed off${1:+ as $1}"; [ $# -eq 0 ]; return; fi
+    if [ "$n" -gt 1 ]; then
+      echo "more than one handoff; name one: sankofa pickup <branch>" >&2
+      printf '%s\n' "$list" | awk -F'\t' '{ printf "  %s  at %s  %s\n", $1, substr($2, 1, 7), $3 }' >&2
+      exit 1
+    fi
+    b=$(printf '%s' "$list" | cut -f1); sha=$(printf '%s' "$list" | cut -f2); hid=$(printf '%s' "$list" | cut -f3)
+    remote=${b%%/*}; rb=${b#*/}
+    git cat-file -e "$sha^{commit}" 2>/dev/null || die "commit $sha of $b is not here; did git fetch $remote fail?"
+    tag=$(git rev-parse -q --verify "refs/sankofa/remote/$b" || :)
+    if [ -n "$tag" ] && [ "$(git rev-parse "$tag^{commit}")" = "$sha" ]; then
+      # written by whoever could push the ref: keep it printable before it reaches a terminal
+      letter=$(git cat-file tag "$tag" | sed '1,/^$/d' | printable)
+      who=$(git cat-file tag "$tag" | sed -n 's/^tagger \(.*\) <.*/\1/p' | printable)
+    else
+      tag=; letter=$(jq -r --arg id "$hid" 'select(.id==$id) | .text' "$LEDGER")
+      who=$(jq -r --arg id "$hid" 'select(.id==$id) | .device // .session' "$LEDGER")
+    fi
+    tip=$sha
+    if git rev-parse -q --verify "refs/remotes/$b" >/dev/null && git merge-base --is-ancestor "$sha" "refs/remotes/$b"; then tip=refs/remotes/$b; fi
+    tip=$(git rev-parse "$tip")
+  fi
+  # everything that could refuse the switch is checked before the handoff is taken
+  if git show-ref -q --verify "refs/heads/$rb"; then
+    git merge-base --is-ancestor "refs/heads/$rb" "$tip" || die "your $rb has commits of its own; merge $b by hand"
+  fi
+  in_way=$({ git ls-tree -r --name-only "$tip"; git ls-files -o --exclude-standard; } | sort | uniq -d | head -n3 | tr '\n' ' ')
+  [ -z "$in_way" ] || die "untracked files here are in $rb too; move them first: $in_way"
+  if [ ! -f "$JP" ]; then
+    mark=
+    [ -z "$tag" ] || mark=$(printf 'object %s\ntype tag\ntag taken/%s\ntagger %s\n\npicked up on %s\n' "$tag" "$rb" \
+                            "$(git var GIT_COMMITTER_IDENT)" "$(this_device)" | git hash-object -t tag -w --stdin)
+    jput "$JP" "$(jq -nc --arg b "$b" --arg sha "$sha" --arg tip "$tip" --arg hid "$hid" --arg tag "$tag" --arg mark "$mark" \
+      --arg who "$who" --arg letter "$letter" '{stage:"claiming",b:$b,sha:$sha,tip:$tip,hid:$hid,tag:$tag,mark:$mark,who:$who,letter:$letter}')"
+    # take it first, so two people picking up at once cannot both have it
+    claim_handoff
+    jput "$JP" "$(jq -c '.stage = "claimed"' "$JP")"
+  fi
+  if [ "$(git symbolic-ref -q --short HEAD || :)" = "$rb" ] && [ "$(git rev-parse HEAD)" = "$tip" ]; then :
+  elif git show-ref -q --verify "refs/heads/$rb"; then
+    # one step, so a refusal leaves you where you were: $rb only moves forward (checked above)
+    err=$(git switch -q -C "$rb" "$tip" 2>&1) || switch_failed "$err"
+  elif git rev-parse -q --verify "refs/remotes/$b" >/dev/null && [ "$(git rev-parse "refs/remotes/$b")" = "$tip" ]; then
+    err=$(git switch -q -c "$rb" --track "$b" 2>&1) || switch_failed "$err"
+  else err=$(git switch -q -c "$rb" "$tip" 2>&1) || switch_failed "$err"; fi
+  short=$(git rev-parse --short HEAD)
+  if [ "$hid" = - ]; then
+    t="picked up $rb at $short from $who: $letter"
+    jq -e --arg t "$t" 'select(.type=="note" and .text==$t)' "$LEDGER" >/dev/null 2>&1 || append note "$t" >/dev/null
+  fi
+  # without a hub the open items exist only in the letter: carry them over as todos here, but not
+  # one already open here (an interrupted pickup finished, or the same item in an earlier letter)
+  if [ -z "$(cfg hub_repo "")" ]; then
+    # the letter and the tagger came from the remote: they are data here, never part of a program
+    printf '%s\n' "$letter" | WHO=$who awk '
+        /^Open items:$/ { on = 1; next }
+        on && match($0, /^- [^ ]* [a-z]*: /) {
+          id = substr($0, 3); sub(/ .*/, "", id)
+          printf "%s (from %s, was %s)\n", substr($0, RLENGTH + 1), ENVIRON["WHO"], id
+        }' |
+      while IFS= read -r t; do
+        open_items | awk -F'\t' '$2 == "todo" { print $4 }' | grep -qxF -- "$t" || append todo "$t" >/dev/null
+      done
+  fi
+  rm -f "$JP"
+  # what became of the branch after the handoff: the letter still holds the commit either way
+  if ! git rev-parse -q --verify "refs/remotes/$b" >/dev/null; then
+    printf 'sankofa: %s is no longer on %s; you have the handed-off commit\n' "$b" "$remote" >&2
+  elif ! git merge-base --is-ancestor "$sha" "refs/remotes/$b"; then
+    printf 'sankofa: %s was rewritten after the handoff; you are at the handed-off commit, %s is at %s\n' \
+      "$b" "$b" "$(git rev-parse --short "refs/remotes/$b")" >&2
+  fi
+  printf 'picked up %s from %s, now at %s\n\n%s\n' "$rb" "$who" "$short" "$letter"
+}
+
+fmt_lease() { jq -r '"\(.id)\t\(.state)\(if .dirty then ",dirty" else "" end)\t\(.glob)\t\(.session) [\(.agent)]\(if .device then "@\(.device)" else "" end)\tuntil \(.expires)"'; }
+
+cmd_claim() {
+  [ $# -ge 1 ] || die "claim needs a glob"
+  need_root
+  g=$(repo_rel "$1"); ttl=$(ttl_secs "${2:-30m}")
+  dcall "$(jq -nc --arg repo "$ROOT" --arg glob "$g" --argjson ttl "$ttl" --arg session "$(session_id)" \
+            --arg agent "$(agent_name)" --arg wt "$(wt_fp)" --arg client "$(client_name)" \
+            '{verb:"claim",repo:$repo,glob:$glob,ttl:$ttl,session:$session,agent:$agent,client:$client}
+             + (if $wt != "-" then {wt:$wt} else {} end)')"
+  case $DRC in
+    3) local_append flag "claim on $g not recorded: sankofad unreachable" >/dev/null
+       printf 'sankofa: sankofad unreachable; claim on %s not recorded (flagged in the ledger)\n' "$g" >&2
+       return 0 ;;
+    0) ;;
+    *) die "$(derr)" ;;
+  esac
+  if [ "$(printf '%s' "$DOUT" | jq -r .granted)" = true ]; then
+    verb=held; [ "$(printf '%s' "$DOUT" | jq -r .renewed)" = true ] && verb=renewed
+    [ "$(printf '%s' "$DOUT" | jq -r '.state // ""')" = queued ] && verb="allowed (hub unreachable; queued, not leased)"
+    printf '%s' "$DOUT" | jq -r --arg v "$verb" '.lease | "\(.id)  \($v)  \(.glob)  until \(.expires)"'
+    printf '%s' "$DOUT" | jq -r '.warnings[]? | "warning: \(.id) on \(.glob) by \(.session) [\(.agent)] ended \(.state) without done; its last edit is unconfirmed"' >&2
+  else
+    printf 'denied: %s overlaps\n' "$g" >&2
+    printf '%s' "$DOUT" | jq -r '.conflicts[] | "  \(.id)  \(.glob)  held by \(.session) [\(.agent)]\(if .device then " on \(.device)" else "" end) until \(.expires)"' >&2
+    exit 2
+  fi
+}
+
+cmd_release() {
+  [ $# -ge 1 ] || die "release needs a lease id"
+  need_root
+  dcall "$(jq -nc --arg repo "$ROOT" --arg ref "$1" --arg session "$(session_id)" --arg agent "$(agent_name)" \
+            '{verb:"release",repo:$repo,ref:$ref,session:$session,agent:$agent}')"
+  case $DRC in 0) ;; 3) die "sankofad unreachable; leases live in the daemon" ;; *) die "$(derr)" ;; esac
+}
+
+cmd_ask() {
+  [ $# -ge 1 ] || die "ask needs a path"
+  need_root
+  p=$(repo_rel "$1")
+  dcall "$(jq -nc --arg repo "$ROOT" --arg path "$p" '{verb:"ask",repo:$repo,path:$path}')"
+  case $DRC in 0) ;; 3) echo "unknown  $p  (sankofad unreachable)"; return 0 ;; *) die "$(derr)" ;; esac
+  printf '%s' "$DOUT" | jq -r --arg p "$p" '
+    if .state == "held" then "held  \($p)  \(.lease.id) \(.lease.glob) by \(.lease.session) [\(.lease.agent)]\(if .lease.device then " on \(.lease.device)" else "" end) until \(.lease.expires)"
+    else "free  \($p)" end,
+    (.warnings[]? | "dirty  \(.id) \(.glob) by \(.session) [\(.agent)] ended \(.state) without done")'
+}
+
+cmd_leases() {
+  need_root
+  if [ "${1:-}" = settle ]; then
+    dneed "$(jq -nc --arg repo "$ROOT" '{verb:"settle",repo:$repo}')"
+    out=$(printf '%s' "$DOUT" | jq -r '.entries[]? | "\(.ref)\t\(.text)"')
+    if [ -z "$out" ]; then echo "nothing to settle"; else printf '%s\n' "$out"; fi
+    return
+  fi
+  dcall "$(jq -nc --arg repo "$ROOT" '{verb:"leases",repo:$repo}')"
+  case $DRC in 0) ;; 3) die "sankofad unreachable; leases live in the daemon" ;; *) die "$(derr)" ;; esac
+  out=$(printf '%s' "$DOUT" | jq -c '.leases[]?' | fmt_lease)
+  if [ -z "$out" ]; then echo "no leases"; else printf '%s\n' "$out" | awk -F'\t' '{ printf "%-5s %-14s %-24s %-28s %s\n", $1, $2, $3, $4, $5 }'; fi
+}
+
+cmd_events() {
+  follow=false; since=null; all=false
+  while [ $# -gt 0 ]; do
+    case $1 in --follow|-f) follow=true ;; --since) since=$2; shift ;; --all) all=true ;; *) die "events [--follow] [--since N] [--all]" ;; esac
+    shift
+  done
+  if [ "$all" = true ]; then repo=null; else need_root; repo=$(jq -n --arg r "$ROOT" '$r'); fi
+  req=$(jq -nc --argjson repo "$repo" --argjson since "$since" --argjson follow "$follow" \
+        '{verb:"events",follow:$follow} + (if $since != null then {since:$since} else {} end)
+         + (if $repo then {repo:$repo} else {} end)')
+  if [ "$follow" = true ]; then
+    s=$(sock_path); b=$(daemon_bin) || die "sankofad not found"
+    [ -S "$s" ] || die "sankofad unreachable at $s"
+    set +e; printf '%s' "$req" | "$b" send --socket "$s"; rc=$?; set -e
+    exit "$rc"
+  fi
+  dcall "$req"
+  case $DRC in 0) ;; 3) die "sankofad unreachable at $(sock_path)" ;; *) die "$(derr)" ;; esac
+  printf '%s' "$DOUT" | jq -c '.entries[]'
+}
+
+cmd_daemon() {
+  dcall '{"verb":"ping"}'
+  if [ "$DRC" = 0 ]; then printf 'sankofad %s on %s\n' "$(printf '%s' "$DOUT" | jq -r .version)" "$(sock_path)"
+  else printf 'sankofad not answering on %s; writes go to the local ledger\n' "$(sock_path)"; return 1; fi
+}
+
+cmd_last() { need_root; tail -n "${1:-5}" "$LEDGER" | render; }
+cmd_log()  { need_root; render < "$LEDGER"; }
+
+# Hook: reads Claude Code hook JSON on stdin. Silent no-op outside a sankofa repo.
+cmd_hook() {
+  kind=${1:-}
+  case $kind in stop|subagent-stop|session-end) ;; *) die "hook stop|subagent-stop|session-end" ;; esac
+  input=$(cat)
+  # Leases end with their holder in every repo, whatever directory the hook runs in:
+  # a session's subagents may have leased files in repos other than the session's cwd.
+  case $kind in
+    subagent-stop|session-end)
+      fin=$(printf '%s' "$input" | jq -c --arg kind "$kind" '
+        {verb:"finish", session:(.session_id // "-")}
+        + if $kind == "session-end" then {text:"session ended"}
+          elif (.agent_id // "") != "" then
+            {agent:"subagent:\((.agent_type // "") | if . == "" then "agent" else . end)/\(.agent_id)", text:"subagent finished"}
+          else {agent:"subagent:\(.agent_name // .agent_type // "unnamed")", text:"subagent finished"} end')
+      dcall "$fin" ;;
+  esac
+  [ "$kind" = session-end ] && exit 0
+  ROOT=$(find_root) || exit 0
+  LEDGER=$ROOT/.sankofa/ledger.jsonl; CONFIG=$ROOT/.sankofa/config
+  [ -f "$LEDGER" ] || : > "$LEDGER"
+
+  session=$(printf '%s' "$input" | jq -r '.session_id // "-"')
+  transcript=$(printf '%s' "$input" | jq -r '.transcript_path // ""')
+  active=$(printf '%s' "$input" | jq -r '.stop_hook_active // false')
+  msg=$(printf '%s' "$input" | jq -r '.last_assistant_message // "" | gsub("[\n\t]+"; " ") | sub(" +$"; "") | .[0:400]')
+  if [ "$kind" = subagent-stop ]; then
+    # the same holder name the pre-edit gate gives this subagent
+    agent=$(printf '%s' "$input" | jq -r '
+      if (.agent_id // "") != "" then "subagent:\((.agent_type // "") | if . == "" then "agent" else . end)/\(.agent_id)"
+      else "subagent:\(.agent_name // .agent_type // "unnamed")" end')
+  else
+    agent=main
+  fi
+
+
+  nopen=$(open_items | grep -c . || true)
+
+  if [ "$kind" = stop ]; then
+    require=${SANKOFA_REQUIRE_NOTE:-$(cfg require_note 1)}
+    if [ "$require" = 1 ] && [ "$active" != true ] && [ "$nopen" -gt 0 ]; then
+      # Baseline: this session's last ledger write. Before its first write, the tree as the
+      # ledger last saw it before this session showed up, and every transcript edit counts.
+      # through a hub, only this device's fingerprints describe this device's working tree
+      base=$(jq -rs --arg s "$session" --arg dev "$(this_device)" '
+        (map(select(.session==$s and (.type|IN("note","todo","awaiting","done")))) | last) as $w
+        | ((map(.session==$s) | index(true)) // length) as $i
+        | (.[:$i] | map(select(.wt and ((.device // $dev) == $dev))) | last) as $pre
+        | if $w then [$w.ts, ($w.wt // "-")]
+          else ["", ($pre.wt // "-")] end | @tsv' "$LEDGER")
+      since=$(printf '%s' "$base" | cut -f1); base_wt=$(printf '%s' "$base" | cut -f2)
+      edits=0
+      if [ -n "$transcript" ] && [ -r "$transcript" ]; then
+        # edits to files in this repo only; an edit tool call without a path counts to be safe
+        edits=$(jq -R --arg since "$since" --arg root "$ROOT/" '
+          fromjson? // empty
+          | select(.type=="assistant" and ((.timestamp // "") > $since))
+          | .message.content[]?
+          | select(type=="object" and .type=="tool_use"
+                   and (.name | IN("Edit","Write","MultiEdit","NotebookEdit")))
+          | (.input.file_path // .input.notebook_path // "") as $p
+          | select($p == "" or ($p | startswith($root))) | .name' "$transcript" \
+          | grep -c . || true)
+      fi
+      tree=same
+      [ "$base_wt" != - ] && [ "$(wt_fp)" != "$base_wt" ] && tree=changed
+      if [ "$edits" -gt 0 ] || [ "$tree" = changed ]; then
+        {
+          why=""
+          [ "$edits" -gt 0 ] && why="$edits file edit(s)"
+          [ "$tree" = changed ] && why="${why:+$why, }working tree changed"
+          printf 'sankofa: %s open item(s) in the ledger, and this session changed things (%s) since its last ledger note.\n' "$nopen" "$why"
+          printf 'Before stopping, run: sankofa note "<what changed; what is still open>"\n'
+          printf 'and sankofa done <id> for anything on this list that is finished:\n'
+          open_items | awk -F'\t' '{ printf "  %s  %s  %s\n", $1, $2, $4 }'
+        } >&2
+        exit 2
+      fi
+    fi
+  fi
+
+  append stop "${msg:-stopped}" "" "$session" "$agent" >/dev/null
+  exit 0
+}
+
+GATE_MARK="# sankofa pre-commit gate"
+cmd_gate() {
+  sub=${1:-status}; [ $# -gt 0 ] && shift
+  d=${1:-.}
+  hook=$(cd "$d" && git rev-parse --git-path hooks/pre-commit 2>/dev/null) || die "$d is not in a git repository"
+  case $hook in /*) ;; *) hook=$(cd "$d" && pwd -P)/$hook ;; esac
+  case $sub in
+    install)
+      if [ -e "$hook" ] && ! grep -qF "$GATE_MARK" "$hook"; then
+        die "$hook exists and is not sankofa's; add this line to it instead: sankofad gate git-pre-commit || exit 1"
+      fi
+      mkdir -p "$(dirname "$hook")"
+      cp "$SELF_DIR/../hooks/git-pre-commit" "$hook" 2>/dev/null || cp /usr/share/sankofa/hooks/git-pre-commit "$hook"
+      chmod +x "$hook"
+      echo "sankofa: pre-commit gate installed at $hook" ;;
+    uninstall)
+      [ -e "$hook" ] && grep -qF "$GATE_MARK" "$hook" || die "no sankofa gate at $hook"
+      rm -f "$hook"; echo "sankofa: pre-commit gate removed from $hook" ;;
+    status)
+      if [ -e "$hook" ] && grep -qF "$GATE_MARK" "$hook"; then echo "pre-commit gate: installed ($hook)"
+      else echo "pre-commit gate: not installed"; return 1; fi ;;
+    *) die "gate install|uninstall|status [dir]" ;;
+  esac
+}
+
+watch_reg() { printf '%s' "${XDG_CONFIG_HOME:-$HOME/.config}/sankofa/watched"; }
+
+# daemon-only verbs (trees, bridge): die with a clear message when it is down
+dneed() {
+  dcall "$1"
+  case $DRC in 0) ;; 3) die "sankofad unreachable at $(sock_path); trees and the bridge run in the daemon" ;; *) die "$(derr)" ;; esac
+}
+abs_dir() { [ -d "$1" ] || die "no such directory: $1"; (cd -P "$1" && pwd -P); }
+# offer the desktop toasts the first time a repo starts producing overlap or landed events
+watch_hint() {
+  REG=$(watch_reg)
+  [ -f "$REG" ] && grep -qxF "$ROOT" "$REG" && return 0
+  echo "sankofa: to see these on the desktop: sankofa watch add $ROOT"
+}
+
+print_trees() {
+  printf '%s' "$DOUT" | jq -r '.trees[]? | [.kind, .branch, (.touched|tostring), .path] | @tsv' \
+    | awk -F'\t' '{ printf "%-9s %-24s %4s changed  %s\n", $1, $2, $3, $4 }'
+}
+
+cmd_trees() {
+  need_root
+  sub=${1:-list}; [ $# -gt 0 ] && shift
+  case $sub in
+    list) dneed "$(jq -nc --arg repo "$ROOT" '{verb:"trees",repo:$repo}')"; print_trees ;;
+    on)   dneed "$(jq -nc --arg repo "$ROOT" '{verb:"trees-add",repo:$repo}')"; print_trees; watch_hint ;;
+    add)
+      [ $# -ge 1 ] || die "trees add <dir>..."
+      paths=$(for d in "$@"; do abs_dir "$d"; echo; done | jq -Rsc 'split("\n") | map(select(length > 0))')
+      dneed "$(jq -nc --arg repo "$ROOT" --argjson p "$paths" '{verb:"trees-add",repo:$repo,paths:$p}')"; print_trees; watch_hint ;;
+    rm)
+      [ $# -ge 1 ] || die "trees rm <dir>..."
+      paths=$(for d in "$@"; do if [ -d "$d" ]; then abs_dir "$d"; else printf '%s' "$d"; fi; echo; done | jq -Rsc 'split("\n") | map(select(length > 0))')
+      dneed "$(jq -nc --arg repo "$ROOT" --argjson p "$paths" '{verb:"trees-rm",repo:$repo,paths:$p}')"; echo "sankofa: stopped watching $*" ;;
+    off)  dneed "$(jq -nc --arg repo "$ROOT" '{verb:"trees-rm",repo:$repo}')"; echo "sankofa: no longer watching trees of $ROOT" ;;
+    scan)
+      dneed "$(jq -nc --arg repo "$ROOT" '{verb:"rescan",repo:$repo}')"
+      out=$(printf '%s' "$DOUT" | jq -c '.entries[]?' | render)
+      if [ -n "$out" ]; then printf '%s\n' "$out"; else echo "no new overlaps"; fi ;;
+    *) die "trees on|add <dir>...|list|scan|rm <dir>...|off" ;;
+  esac
+}
+
+print_bridge() {
+  printf '%s' "$DOUT" | jq -r '
+    if .state == "off" or .bridge == null then "bridge off"
+    else .bridge | "bridge on  every \(.interval) s, \(.refs) remote branches"
+      + (if .last_ok then "\n  last fetch ok   \(.last_ok)" else "" end)
+      + (if .last_error then "\n  last fetch FAILED \(.last_fetch): \(.last_error)" else "" end) end'
+}
+
+cmd_bridge() {
+  need_root
+  sub=${1:-status}; [ $# -gt 0 ] && shift
+  case $sub in
+    status) dneed "$(jq -nc --arg repo "$ROOT" '{verb:"bridge",repo:$repo}')"; print_bridge ;;
+    on)
+      iv=$(ttl_secs "${1:-5m}")
+      dneed "$(jq -nc --arg repo "$ROOT" --argjson iv "$iv" '{verb:"bridge",repo:$repo,on:true,interval:$iv}')"
+      print_bridge; watch_hint ;;
+    off) dneed "$(jq -nc --arg repo "$ROOT" '{verb:"bridge",repo:$repo,on:false}')"; print_bridge ;;
+    fetch)
+      dneed "$(jq -nc --arg repo "$ROOT" '{verb:"fetch",repo:$repo}')"
+      out=$(printf '%s' "$DOUT" | jq -c '.entries[]?' | render)
+      if [ -n "$out" ]; then printf '%s\n' "$out"; else echo "nothing new landed"; fi
+      printf '%s' "$DOUT" | jq -r '.bridge.last_error // empty | "sankofa: fetch failed: \(.)"' >&2 ;;
+    *) die "bridge on [interval]|off|status|fetch" ;;
+  esac
+}
+
+set_cfg() { # set_cfg key value (empty value: remove the key)
+  tmp=$CONFIG.tmp.$$
+  { [ -f "$CONFIG" ] && grep -vE "^$1=" "$CONFIG" || :; [ -n "$2" ] && printf '%s=%s\n' "$1" "$2"; } > "$tmp"
+  mv "$tmp" "$CONFIG"
+}
+
+# a repo's name on the hub: its git remote without scheme, user, port and .git
+repo_name() {
+  u=$(git -C "$ROOT" remote get-url origin 2>/dev/null || :)
+  if [ -z "$u" ]; then basename "$ROOT"; return 0; fi
+  printf '%s' "$u" | sed -E 's#^[a-z+]+://##; s#^[^@/]+@##; s#^([^/:]+):([^0-9/])#\1/\2#; s#:[0-9]+/#/#; s#\.git/?$##; s#/+$##; s#^/+##; s#[^A-Za-z0-9._/-]#-#g'
+}
+
+cmd_hub() {
+  sub=${1:-status}; [ $# -gt 0 ] && shift
+  case $sub in
+    join)
+      [ $# -ge 2 ] || die "hub join <url> <token> [device]"
+      url=${1%/}; token=$2; dev=${3:-$(uname -n)}
+      conf=$(hub_conf); mkdir -p "$(dirname "$conf")"
+      ( umask 077; printf 'url=%s\ntoken=%s\ndevice=%s\n' "$url" "$token" "$dev" > "$conf" )
+      if command -v curl >/dev/null 2>&1; then
+        code=$(curl -s -o /dev/null -w '%{http_code}' -m 5 -H "Authorization: Bearer $token" \
+               -H 'Content-Type: application/json' -d '{"verb":"ping"}' "$url/v1/rpc" || :)
+        case $code in
+          200) echo "sankofa: joined $url as $dev" ;;
+          401) die "the hub at $url refused that token (saved anyway in $conf)" ;;
+          *)   echo "sankofa: saved $conf; the hub at $url did not answer ($code); writes queue until it does" ;;
+        esac
+      else echo "sankofa: saved $conf (install curl to check the hub now)"; fi ;;
+    on)
+      need_root
+      [ -f "$(hub_conf)" ] || die "this device has no hub yet: sankofa hub join <url> <token>"
+      name=${1:-$(cfg hub_repo "")}; [ -n "$name" ] || name=$(repo_name)
+      set_cfg hub_repo "$name"
+      dcall "$(jq -nc --arg repo "$ROOT" '{verb:"hub-attach",repo:$repo}')"
+      case $DRC in
+        0) st=$(printf '%s' "$DOUT" | jq -r .state)
+           case $st in
+             seeded) echo "sankofa: $ROOT is $name on the hub; this device's ledger became its first events" ;;
+             joined) echo "sankofa: $ROOT is $name on the hub; the ledger is now the hub's (yours is kept in .sankofa/ledger.pre-hub.jsonl)" ;;
+             *)      echo "sankofa: $ROOT is $name on the hub ($st)" ;;
+           esac ;;
+        3) set_cfg hub_repo ""; die "sankofad unreachable at $(sock_path); hub on needs it" ;;
+        *) set_cfg hub_repo ""; die "$(derr)" ;;
+      esac ;;
+    off)
+      need_root
+      dneed "$(jq -nc --arg repo "$ROOT" '{verb:"hub-detach",repo:$repo}')"
+      set_cfg hub_repo ""
+      echo "sankofa: $ROOT is local again; the hub replica is kept in .sankofa/ledger.hub.jsonl" ;;
+    status)
+      need_root
+      dneed "$(jq -nc --arg repo "$ROOT" '{verb:"hub-status",repo:$repo}')"
+      printf '%s' "$DOUT" | jq -r '
+        if .state == "off" then "hub off" + (if .url then " (this device: \(.device) on \(.url))" else "" end)
+        else "hub \(.state)  \(.id) on \(.url) as \(.device), at event \(.cursor)"
+          + (if (.queued // 0) > 0 then ", \(.queued) bytes queued for the hub" else "" end) end' ;;
+    *) die "hub join <url> <token> [device] | on [name] | off | status" ;;
+  esac
+}
+
+cmd_watch() {
+  REG=$(watch_reg); mkdir -p "$(dirname "$REG")"; [ -f "$REG" ] || : > "$REG"
+  sub=${1:-list}; [ $# -gt 0 ] && shift
+  case $sub in
+    add)
+      d=${1:-.}; [ -d "$d" ] || die "no such directory: $d"
+      r=$(cd -P "$d" && find_root) || die "no .sankofa/ in $d or above; run 'sankofa init' there first"
+      if grep -qxF "$r" "$REG"; then echo "sankofa: already watching $r"
+      else printf '%s\n' "$r" >> "$REG"; echo "sankofa: watching $r"; fi ;;
+    list)
+      [ -s "$REG" ] || { echo "no watched repos"; return 0; }
+      while IFS= read -r r; do
+        [ -n "$r" ] || continue
+        if [ -f "$r/.sankofa/ledger.jsonl" ]; then echo "$r"; else echo "$r  (ledger missing)"; fi
+      done < "$REG" ;;
+    rm)
+      d=${1:-.}
+      r=$( (cd -P "$d" 2>/dev/null && find_root) || printf '%s' "${d%/}")
+      grep -qxF "$r" "$REG" || die "not watching $r"
+      tmp=$REG.tmp.$$; grep -vxF "$r" "$REG" > "$tmp" || :; mv "$tmp" "$REG"
+      echo "sankofa: stopped watching $r" ;;
+    *) die "watch add|list|rm" ;;
+  esac
+}
+
+main() {
+  cmd=${1:-}; [ $# -gt 0 ] && shift
+  case "$cmd" in
+    init)      cmd_init "$@" ;;
+    setup)     s=$SELF_DIR/../install.sh
+               if [ -f "$s" ]; then exec sh "$s" "$@"; fi
+               s=/usr/share/sankofa/install.sh
+               [ -f "$s" ] || die "install.sh not found beside this sankofa nor in /usr/share/sankofa"
+               exec sh "$s" --packaged "$@" ;;
+    note)      cmd_note "$@" ;;
+    todo)      cmd_todo "$@" ;;
+    awaiting)  cmd_awaiting "$@" ;;
+    done)      cmd_done "$@" ;;
+    handoff)   cmd_handoff "$@" ;;
+    pickup)    cmd_pickup "$@" ;;
+    open)      cmd_open "$@" ;;
+    last)      cmd_last "$@" ;;
+    log)       cmd_log "$@" ;;
+    hook)      cmd_hook "$@" ;;
+    claim)     cmd_claim "$@" ;;
+    gate)      cmd_gate "$@" ;;
+    release)   cmd_release "$@" ;;
+    ask)       cmd_ask "$@" ;;
+    leases)    cmd_leases "$@" ;;
+    events)    cmd_events "$@" ;;
+    daemon)    cmd_daemon "$@" ;;
+    watch)     cmd_watch "$@" ;;
+    trees)     cmd_trees "$@" ;;
+    bridge)    cmd_bridge "$@" ;;
+    hub)       cmd_hub "$@" ;;
+    dash)      if [ "${1:-}" = --gui ]; then
+                 shift
+                 d=$SELF_DIR/out/sankofa-gui; [ -x "$d" ] || d=$(command -v sankofa-gui 2>/dev/null || :)
+                 [ -n "$d" ] || die "sankofa-gui is not built (make build)"
+               else
+                 d=$SELF_DIR/out/sankofa-tui; [ -x "$d" ] || d=$(command -v sankofa-tui 2>/dev/null || :)
+                 [ -n "$d" ] || die "sankofa-tui is not built (make build)"
+               fi
+               exec "$d" "$@" ;;
+    version|-V|--version) echo "sankofa $VERSION" ;;
+    ""|help|-h|--help) usage ;;
+    *) die "unknown command '$cmd' (try: sankofa help)" ;;
+  esac
+}
+main "$@"

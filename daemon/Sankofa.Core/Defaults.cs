@@ -1,6 +1,6 @@
 namespace Sankofa;
 
-static class Defaults
+public static class Defaults
 {
     public static string Socket()
     {
