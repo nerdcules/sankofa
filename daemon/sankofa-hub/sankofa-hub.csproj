@@ -16,6 +16,5 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../Sankofa.Core/Sankofa.Core.csproj" />
-    <Compile Include="../sankofad/Defaults.cs" />
   </ItemGroup>
 </Project>

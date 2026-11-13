@@ -11,9 +11,14 @@ MCP := bin/out/sankofa-mcp
 HUB := bin/out/sankofa-hub
 TUI := bin/out/sankofa-tui
 GUI := bin/out/sankofa-gui
+CLI := bin/out/sankofa
 SOURCES := $(shell find daemon -name '*.cs' -o -name '*.csproj' -o -name '*.props' | grep -v /obj/ | grep -v /bin/)
 
-build: $(DAEMON) $(MCP) $(HUB) $(TUI) $(GUI)
+build: $(DAEMON) $(MCP) $(HUB) $(TUI) $(GUI) $(CLI)
+# the command itself (0.14): one native binary on every platform
+$(CLI): $(SOURCES)
+	dotnet publish daemon/sankofa-cli -c Release -r $(RID) -o bin/out --nologo -v quiet
+	@rm -f bin/out/*.pdb bin/out/*.dbg
 $(DAEMON): $(SOURCES)
 	dotnet publish daemon/sankofad -c Release -r $(RID) -o bin/out --nologo -v quiet
 	@rm -f bin/out/*.pdb bin/out/*.dbg
