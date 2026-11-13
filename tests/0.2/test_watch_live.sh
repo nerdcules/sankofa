@@ -1,7 +1,6 @@
 #!/bin/sh
 # The real watcher with inotify: a toast arrives within seconds; a restart catches up.
 . "$(dirname "$0")/lib.sh"
-command -v inotifywait >/dev/null || { echo "skip watch live: no inotifywait"; exit 0; }
 mkrepo alpha; (cd alpha && $S watch add >/dev/null)
 export SANKOFA_WATCH_TIMEOUT=3 SANKOFA_TOAST_TYPES="awaiting note"
 wait_for() { # n seconds

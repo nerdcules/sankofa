@@ -14,9 +14,15 @@ case " \$* " in *"\$CRASH_MATCH"*) kill -9 "-\$(ps -o pgid= -p \$\$ | tr -d ' ')
 exit \$rc
 SH
 chmod +x "$T/shim/git"
+# a new session (process group) for the command, so the shim's group kill reaches it and nothing else;
+# macOS has no setsid command, python does the same
+newsid() { if command -v setsid >/dev/null; then setsid -w "$@"; else python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' "$@"; fi; }
 crash() { # crash <match> <name> sankofa-args...: run sankofa as <name>, killed after the matching git call
   m=$1; n=$2; shift 2
-  set +e; as "$n" env PATH="$T/shim:$PATH" CRASH_MATCH="$m" setsid -w "$S" "$@" >/dev/null 2>&1; rc=$?; set -e
+  set +e
+  ( export PATH="$T/shim:$PATH" CRASH_MATCH="$m" GIT_AUTHOR_NAME=$n GIT_AUTHOR_EMAIL=$n@x GIT_COMMITTER_NAME=$n GIT_COMMITTER_EMAIL=$n@x SANKOFA_SESSION=s-$n
+    newsid "$S" "$@" ) >/dev/null 2>&1; rc=$?
+  set -e
   assert_eq "$rc" 137 "the command was killed (after: $m)"
 }
 

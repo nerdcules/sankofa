@@ -22,10 +22,10 @@ echo 'int b2;' >> "$T/wt/src/b.c"
 sleep 1.5; assert_eq "$(overlaps)" 0 "different paths do not overlap"
 
 # the same path, through inotify (no scan asked for)
-t0=$(date +%s%N)
+t0=$(now_ns)
 echo 'int a3;' >> "$T/wt/src/a.c"
 wait_overlaps 1
-t1=$(date +%s%N)
+t1=$(now_ns)
 assert_eq "$(overlaps)" 1 "one overlap for src/a.c"
 ev=$(jq -c 'select(.type=="overlap")' .sankofa/ledger.jsonl)
 assert_eq "$(printf '%s' "$ev" | jq -r .glob)" "src/a.c" "the overlap names the path"
