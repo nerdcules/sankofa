@@ -8,8 +8,8 @@ bad=$(git ls-files -s | while read -r mode _ _ path; do
   [ "$mode" = 120000 ] && continue                        # symlinks (CLAUDE.md -> AGENTS.md)
   [ -f "$path" ] || continue                               # deleted in the work tree
   if [ "$(wc -c < "$path")" -gt 262144 ]; then echo "too large: $path"; continue; fi
-  case $path in docs/images/*.png|docs/images/*.svg) continue ;; esac
-  case $(file -b --mime-encoding "$path") in binary) echo "binary: $path" ;; esac
+  case $path in (docs/images/*.png|docs/images/*.svg) continue ;; esac   # (pattern): bash 3.2 (macOS sh) cannot parse pattern) inside $( )
+  case $(file -b --mime-encoding "$path") in (binary) echo "binary: $path" ;; esac
 done)
 # anything else under docs/images is a mistake
 for f in docs/images/*; do
