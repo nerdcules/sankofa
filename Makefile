@@ -58,7 +58,6 @@ DIST := $(DISTDIR)/sankofa-$(VERSION)-$(PKG)-$(ARCH)
 dist: build
 	rm -rf $(DIST) && mkdir -p $(DIST)/bin/out $(DIST)/packaging
 	cp bin/sankofa bin/sankofa-watch $(DIST)/bin/
-	@[ ! -f bin/sankofa-sh ] || cp bin/sankofa-sh $(DIST)/bin/   # while verbs are still being ported from the shell CLI
 	cp bin/out/sankofa bin/out/sankofad bin/out/sankofa-mcp bin/out/sankofa-hub bin/out/sankofa-tui bin/out/sankofa-gui $(DIST)/bin/out/
 	cp bin/out/libSkiaSharp.* bin/out/libHarfBuzzSharp.* $(DIST)/bin/out/
 	cp -r hooks systemd docs $(DIST)/
