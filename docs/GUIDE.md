@@ -24,7 +24,7 @@ The short version of everything here is the [README](../README.md).
 ## Quick start
 
 ```sh
-# install first: INSTALL.md (one line on Linux; .deb, tarball, Arch, or from source)
+# install first: INSTALL.md (one line on Linux and macOS; a zip on Windows; .deb, tarball, Arch, or from source)
 cd ~/Work/some-repo
 sankofa init            # creates .sankofa/ (add it to .gitignore or commit it, your call)
 sankofa watch add       # toast this repo's awaiting items on the desktop
@@ -152,9 +152,10 @@ sankofa watch add       # toast awaiting, handoff, overlap and landed events on 
 - `overlap`: a path changed in two or more trees. A tree's changes count from
   where it left the home tree's history (the merge base), so a worktree's
   commits count until they are merged. The daemon watches each tree with
-  inotify (skipping `.git/`, ignored directories and nested repos) and asks git
+  the system's file watcher (inotify on Linux, FSEvents on macOS,
+  ReadDirectoryChangesW on Windows; skipping `.git/`, ignored directories and nested repos) and asks git
   after each burst of writes settles (300 ms), and rescans every 30 s for
-  commits and anything inotify missed. Each overlap is recorded once, again
+  commits and anything the watcher missed. Each overlap is recorded once, again
   only when another tree joins or after it has cleared. The event's `glob` is
   the path.
 - `landed`: a remote branch moved, with `branch` (`origin/x`) and `sha`, the
@@ -337,7 +338,7 @@ The four pictures, rendered that way from `tests/fixtures` (the images under
 </tr>
 </table>
 
-The daemon, hooks and hub stay Linux; on another platform the window reads
-ledgers that the CLI's local fallback or a hub replica keeps there. The Qt
+Since 0.14 every part runs on Linux, macOS and Windows; the window can also
+read ledgers a hub replica keeps on a machine with no daemon of its own. The Qt
 window for Omarchy that 0.8 shipped is gone (2026-11-12); this one replaces it.
 
