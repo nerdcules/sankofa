@@ -98,13 +98,16 @@ gui-dist:
 test: build test-shell test-shell-daemon test-dotnet
 	@echo "all tests passed"
 
-# KEEP=1 runs every test and fails at the end, so one CI run shows all the failures on a new platform
+# KEEP=1 runs every test and fails at the end, so one CI run shows all the failures on a new platform.
+# The tests are POSIX sh; on macOS /bin/sh is bash in POSIX mode, where an assignment before a
+# function call (SANKOFA_GATE=0 gate ...) stays set afterwards, so the suite runs under plain bash there.
 KEEP ?= 0
+SH ?= $(shell [ "$$(uname -s)" = Darwin ] && echo bash || echo sh)
 test-shell:
-	@f=0; for t in tests/*/test_*.sh; do [ -e "$$t" ] || continue; echo "== $$t"; sh "$$t" || { f=1; [ "$(KEEP)" = 1 ] || exit 1; }; done; exit $$f
+	@f=0; for t in tests/*/test_*.sh; do [ -e "$$t" ] || continue; echo "== $$t"; $(SH) "$$t" || { f=1; [ "$(KEEP)" = 1 ] || exit 1; }; done; exit $$f
 
 test-shell-daemon:
-	@for t in tests/0.1/test_*.sh tests/0.2/test_*.sh; do echo "== $$t (through sankofad)"; SANKOFA_TEST_DAEMON=1 sh "$$t" || exit 1; done
+	@for t in tests/0.1/test_*.sh tests/0.2/test_*.sh; do echo "== $$t (through sankofad)"; SANKOFA_TEST_DAEMON=1 $(SH) "$$t" || exit 1; done
 
 test-dotnet:
 	dotnet test tests/0.3/Sankofa.Tests --nologo -v quiet
