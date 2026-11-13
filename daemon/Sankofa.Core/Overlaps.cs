@@ -13,7 +13,7 @@ namespace Sankofa;
 public sealed class Overlaps : IDisposable
 {
     readonly Store store;
-    readonly Inotify? inotify;
+    readonly ITreeWatcher? inotify;
     readonly Lock gate = new();
     readonly Dictionary<string, Group> groups = [];
     readonly Dictionary<string, string> treeHome = [];
@@ -42,7 +42,7 @@ public sealed class Overlaps : IDisposable
         this.store = store;
         if (useInotify)
         {
-            inotify = new Inotify();
+            inotify = ITreeWatcher.Create();   // inotify on Linux, FileSystemWatcher on macOS and Windows
             inotify.Changed += tree => { if (HomeOf(tree) is { } h) Poke(h); };
             inotify.Overflow += () => { foreach (var h in Homes()) Poke(h); };
             inotify.LimitReached += LimitReached;

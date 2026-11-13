@@ -20,7 +20,8 @@ public sealed class Bridge : IDisposable
 {
     readonly Store store;
     readonly Lock gate = new();
-    readonly HashSet<string> busy = [];
+    /// <summary>The poll running for each repo, so a second caller waits for it instead of fetching twice or being refused.</summary>
+    readonly Dictionary<string, TaskCompletionSource<List<Entry>>> inflight = [];
     readonly Dictionary<string, DateTimeOffset> retryAt = [];
     Timer? tick;
 
@@ -62,12 +63,42 @@ public sealed class Bridge : IDisposable
         }
     }
 
-    /// <summary>Fetch now and record what landed. Null if a poll of this repo is already running.</summary>
-    public List<Entry>? Poll(string repo, bool fetch = true)
+    /// <summary>
+    /// Fetch now and record what landed. When a poll of this repo is already running (the loop's
+    /// own, or another client's) this waits for it and returns its entries: a `sankofa bridge fetch`
+    /// right after `bridge on` gets the baseline's answer rather than a refusal.
+    /// </summary>
+    public List<Entry> Poll(string repo, bool fetch = true)
     {
         repo = Store.RepoKey(repo);
-        lock (gate) if (!busy.Add(repo)) return null;
+        TaskCompletionSource<List<Entry>> tcs;
+        bool mine;
+        lock (gate)
+        {
+            mine = !inflight.TryGetValue(repo, out tcs!);
+            if (mine) inflight[repo] = tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+        if (!mine)
+        {
+            if (!tcs.Task.Wait(FetchTimeoutMs + 5_000)) throw new SankofaException("the fetch already running for this repo did not finish in time");
+            return tcs.Task.Result;
+        }
         try
+        {
+            var written = PollNow(repo, fetch);
+            tcs.SetResult(written);
+            return written;
+        }
+        catch (Exception ex)
+        {
+            tcs.SetException(ex);
+            throw;
+        }
+        finally { lock (gate) inflight.Remove(repo); }
+    }
+
+    List<Entry> PollNow(string repo, bool fetch)
+    {
         {
             string? error = null;
             HashSet<string> fetched = [];
@@ -97,7 +128,6 @@ public sealed class Bridge : IDisposable
                 else retryAt[repo] = DateTimeOffset.UtcNow + RetryAfter;
             return written;
         }
-        finally { lock (gate) busy.Remove(repo); }
     }
 
     public const string HandoffPrefix = "refs/sankofa/remote/";
