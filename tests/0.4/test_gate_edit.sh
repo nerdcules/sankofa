@@ -49,6 +49,7 @@ gate claude-code "$(edit_json D "$PWD/src/c.c")"
 assert_eq "$OUT" "" "expired lease: second edit allowed"
 assert_contains "$(tail -n 3 .sankofa/ledger.jsonl)" "expired" "the expiry is recorded"
 printf 'require_note=1\n' > .sankofa/config
+gate claude-code "$(edit_json D "$PWD/src/c.c")"   # D's lease was a 1 s one: renew it for the checks below (a slow machine took longer)
 
 # not gated: other tools, files outside any ledger, gate=0
 gate claude-code "$(edit_json B "$F" "" "" Read)"; assert_eq "$OUT" "" "Read is not gated"

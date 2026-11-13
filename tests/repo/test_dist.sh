@@ -26,7 +26,7 @@ unset XDG_BIN_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME || true
 mkdir -p "$T/opt" "$HOME"
 tar -xzf "$TGZ" -C "$T/opt"
 sh "$T/opt/$N/install.sh" >/dev/null
-assert_eq "$(readlink -f "$HOME/.local/bin/sankofad")" "$T/opt/$N/bin/out/sankofad" "sankofad links into the unpacked tree"
+assert_eq "$(readlink -f "$HOME/.local/bin/sankofad")" "$(readlink -f "$T/opt/$N/bin/out/sankofad")" "sankofad links into the unpacked tree"
 case $("$HOME/.local/bin/sankofa" version) in "sankofa "*) ;; *) fail "the installed sankofa does not answer version" ;; esac
 assert_eq "$(jq -r '.hooks.Stop[0].hooks[0].command' "$CLAUDE_SETTINGS")" "sankofa hook stop" "hooks wired"
 [ "$PKG" != linux ] || assert_contains "$(cat "$HOME/.config/systemd/user/sankofad.service")" "ExecStart=$HOME/.local/bin/sankofad serve" "unit written"
@@ -37,7 +37,7 @@ sh "$T/opt/$N/install.sh" --uninstall >/dev/null
 if command -v curl >/dev/null; then
   SANKOFA_URL="file://$TGZ" SANKOFA_HOME=$T/share sh "$ROOT/get.sh" >/dev/null
   assert_eq "$(readlink "$T/share/current")" "$N" "current points at the version"
-  assert_eq "$(readlink -f "$HOME/.local/bin/sankofa")" "$T/share/$N/bin/sankofa" "sankofa links into SANKOFA_HOME"
+  assert_eq "$(readlink -f "$HOME/.local/bin/sankofa")" "$(readlink -f "$T/share/$N/bin/sankofa")" "sankofa links into SANKOFA_HOME"
   SANKOFA_URL="file://$TGZ" SANKOFA_HOME=$T/share sh "$ROOT/get.sh" >/dev/null   # again: an upgrade over itself
   case $("$HOME/.local/bin/sankofa" version) in "sankofa "*) ;; *) fail "not installed after a second get" ;; esac
   sh "$T/share/current/install.sh" --uninstall >/dev/null

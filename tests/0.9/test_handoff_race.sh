@@ -20,9 +20,9 @@ sha=$(git rev-parse HEAD)
 (trap - EXIT; cd "$T/bob" && as Bob "$S" pickup feat > "$T/bob.out" 2>&1; echo $? > "$T/bob.rc") & p1=$!
 (trap - EXIT; cd "$T/carol" && as Carol "$S" pickup feat > "$T/carol.out" 2>&1; echo $? > "$T/carol.rc") & p2=$!
 wait "$p1" || :; wait "$p2" || :   # not a bare wait: the daemon is a child too (and the subshells must not run the exit trap)
-won=$(grep -l "^picked up feat" "$T/bob.out" "$T/carol.out" | wc -l)
+won=$(grep -l "^picked up feat" "$T/bob.out" "$T/carol.out" | wc -l | tr -d ' ')
 assert_eq "$won" 1 "exactly one of them has it"
-lost=$(grep -l "someone else picked up feat first\|nothing handed off" "$T/bob.out" "$T/carol.out" | wc -l)
+lost=$(grep -l "someone else picked up feat first\|nothing handed off" "$T/bob.out" "$T/carol.out" | wc -l | tr -d ' ')
 assert_eq "$lost" 1 "the other is told"
 for n in bob carol; do
   if grep -q "^picked up" "$T/$n.out"; then winner=$n; else loser=$n; fi
