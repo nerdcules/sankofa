@@ -446,3 +446,23 @@ was dropped the same day (e202).
 
 - Test runner subscriber (run on `done`, write `tests` event).
 - Lease by module (a path prefix list) rather than single paths.
+
+## 0.13 · get it
+
+Deliver: pre-built packages, the way PowerShell is handed out: a one-line
+installer (`get.sh`), a tarball that installs from wherever it is unpacked, a
+`.deb`, the Arch package, and the window zipped for Windows and macOS, all
+published by a GitHub Actions release on every tag; `make test` on every push.
+The documentation split by audience: a short README, `INSTALL.md` for someone
+trying it, `GUIDE.md` for someone using it, `DEVELOPING.md` for someone
+changing it, `STORY.md` for someone wondering why it exists. Plain words
+throughout (`#11`).
+
+Tests: `tests/repo/test_dist.sh` (the tarball lists what it must and nothing
+else, installs from where it is unpacked and uninstalls, `get.sh` fetches and
+upgrades over itself, `--packaged` and `sankofa setup`, the `.deb`'s members,
+control file and layout, and `dpkg-deb --info` where dpkg exists); the release
+workflow runs it on x64 and arm64 and inspects the `.deb` with dpkg.
+
+Exit: a release on GitHub that a stranger installs on a clean machine with one
+line, and runs the sixty seconds in the README. Then the Mac port.

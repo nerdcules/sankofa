@@ -10,8 +10,8 @@ marked as such.
 | Durable handoff between sessions | Transcripts and `--resume`; subagent transcripts resumable by ID; 30-day retention | Varies; most keep a session log | State is inside transcripts, not readable without re-loading them; nothing cross-client | `sankofa note` + Stop/SubagentStop hooks writing `.sankofa/ledger.jsonl` | 0.1 |
 | Human queue ("awaiting sudo") | None | None | Nothing records what the human owes | `awaiting` event type, notifier | 0.1, 0.2 |
 | Surface events on the desktop | Notification hook (cannot block) | Varies | Only this client's events; no cross-client view | inotify/event-bus notifier → `notify-send` | 0.2 |
-| Ownership of paths | Team task list (by task, in prose); file locks on claims; lost on resume | None | No lease by path; nothing survives resume; single-client | `sankofad` leases with expiry, SQLite | 0.3 |
-| Block an edit on a leased path | PreToolUse hook can deny (exit 2) | Hook support varies; some notify-only | Enforcement differs per client; some have none | Bash hook adapter per client; git pre-commit as universal gate | 0.4 |
+| Who is working on which files | Team task list (by task, in prose); file locks on claims; lost on resume | None | Nothing says "this file is taken" for a file or folder; what the client remembers is lost on resume; only that one client knows | `sankofad` leases with expiry, SQLite | 0.3 |
+| Stop an edit to a file someone else is working on | PreToolUse hook can deny (exit 2) | Hook support varies; some notify-only | Enforcement differs per client; some have none | Bash hook adapter per client; git pre-commit as universal gate | 0.4 |
 | Require a report before an agent stops | SubagentStop can block; Stop can block | Varies | Only where the client supports it | Hook adapters; otherwise detection only | 0.4 |
 | Shared tool interface for any client | MCP supported | MCP widely supported | None once an MCP server exists | `sankofad mcp` stdio server; the hub serves the same tools over HTTP | 0.5, 0.7 |
 | Detect overlap across worktrees | Worktree isolation on spawn | Varies | Isolation yes, detection no | inotify watcher in daemon, overlap event | 0.6 |

@@ -13,6 +13,8 @@ usage() {
 usage: sankofa <command> [args]
 
   init                 create .sankofa/ in the current directory
+  setup                after a package install: wire the Claude Code hooks, the user
+                       services and the MCP registrations (runs install.sh)
   note <text>          record what changed or was decided
   todo <text>          record an open item (prints its id)
   awaiting <text>      record an item that needs the human (prints its id)
@@ -972,6 +974,11 @@ main() {
   cmd=${1:-}; [ $# -gt 0 ] && shift
   case "$cmd" in
     init)      cmd_init "$@" ;;
+    setup)     s=$SELF_DIR/../install.sh
+               if [ -f "$s" ]; then exec sh "$s" "$@"; fi
+               s=/usr/share/sankofa/install.sh
+               [ -f "$s" ] || die "install.sh not found beside this sankofa nor in /usr/share/sankofa"
+               exec sh "$s" --packaged "$@" ;;
     note)      cmd_note "$@" ;;
     todo)      cmd_todo "$@" ;;
     awaiting)  cmd_awaiting "$@" ;;

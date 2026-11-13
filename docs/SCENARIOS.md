@@ -22,7 +22,8 @@ the final reports, merges both and discovers the clobber at build time.
 
 - Failure: silent overwrite inside one client. Reports do not mention paths
   the agent considered incidental.
-- Needs: a lease per path, checked before each edit; an overlap flag.
+- Needs: a way for a session to say "I am working on this file", checked
+  before every edit; a warning when two trees change the same file.
 - Covered by: 0.3 (daemon with leases), 0.4 (edit gate), 0.6 (watcher).
 
 ## S3 · Agent team on parallel features
@@ -32,8 +33,10 @@ but tasks are described in prose, not paths. Two teammates touch the same
 module. The team does not survive a `/resume`, and the lead has to reconstruct
 what landed.
 
-- Failure: ownership is by task, not by path; and it evaporates on resume.
-- Needs: leases keyed by path or glob, persisted outside the client.
+- Failure: who is doing what is recorded by task, not by file, and is
+  forgotten when the session is resumed.
+- Needs: "I am working on these files" recorded by file name or pattern,
+  kept outside the client so it survives a resume.
 - Covered by: 0.3, 0.4.
 
 ## S4 · Two clients on one repo
@@ -71,11 +74,13 @@ nothing to the laptop.
 
 ## S7 · Crash or `/clear` mid-task
 
-The session dies with a lease held and a half-written file. The next session
-must know the lease is stale and that the file is suspect.
+The session dies while it still has a file marked as being worked on, and the
+file is half written. The next session must know that mark is stale and that
+the file is suspect.
 
 - Failure: a wedge, or a half-edit that looks finished.
-- Needs: lease expiry; a "dirty" marker set on claim and cleared on done.
+- Needs: marks that expire on their own; a "may be half-finished" mark set
+  when work starts and cleared when it is done.
 - Covered by: 0.3.
 
 ## S8 · Human-in-the-loop step

@@ -55,6 +55,7 @@ package() {
     install -Dm755 "$f" "$pkgdir/usr/share/sankofa/$f"
   done
   install -Dm644 hooks/codex/README.md "$pkgdir/usr/share/doc/$pkgname/codex.md"
+  install -Dm755 install.sh "$pkgdir/usr/share/sankofa/install.sh"   # `sankofa setup` runs it
   for u in sankofad.service sankofa-watch.service; do
     sed 's|@BIN@|/usr/bin|g' "systemd/$u" | install -Dm644 /dev/stdin "$pkgdir/usr/lib/systemd/user/$u"
   done
