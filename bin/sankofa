@@ -1,6 +1,10 @@
 #!/bin/sh
 # sankofa: the command is the native binary built into bin/out (daemon/sankofa-cli). This
-# script only finds it from a checkout; a package puts the binary itself on PATH.
-d=$(dirname "$0")
-case $d in /*) ;; *) d=$(cd "$d" && pwd) ;; esac
+# launcher only finds it from a checkout (through a symlink too); a package puts the binary on PATH.
+s=$0
+while [ -L "$s" ]; do
+  t=$(readlink "$s")
+  case $t in /*) s=$t ;; *) s=$(dirname "$s")/$t ;; esac
+done
+d=$(cd "$(dirname "$s")" && pwd)
 exec "$d/out/sankofa" "$@"
