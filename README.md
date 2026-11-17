@@ -2,6 +2,8 @@
 
 # sankofa
 
+*Idea: [nerdcules](https://github.com/nerdcules) · Written by: Claude, in [Claude Code](https://claude.com/claude-code)*
+
 *Sankofa* (Akan): "go back and fetch it." The bird that looks back to pick up
 what was left behind.
 
