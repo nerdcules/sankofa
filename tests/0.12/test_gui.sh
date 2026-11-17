@@ -30,6 +30,11 @@ for look in windows mac breeze omarchy; do
   done
 done
 "$GUI" render --out "$T/sel.png" --select e6 --now $NOW "$FX/api.jsonl" >/dev/null || fail "render with a row selected"
+# the About card (Ctrl+I): rendered open, at the size asked, and not the same picture as without it
+"$GUI" render --out "$T/plain.png" --look omarchy --now $NOW --size 1100x700 "$FX/api.jsonl" >/dev/null
+"$GUI" render --out "$T/about.png" --about --look omarchy --now $NOW --size 1100x700 "$FX/api.jsonl" >/dev/null || fail "render with About open"
+assert_eq "$(png_size "$T/about.png")" "1100x700" "render --about"
+cmp -s "$T/plain.png" "$T/about.png" && fail "render --about drew the same picture as without it"
 
 # a live ledger: what the CLI writes shows up in the next look, and a done takes it away
 mkdir repo && cd repo && "$S" init >/dev/null

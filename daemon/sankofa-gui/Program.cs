@@ -3,7 +3,7 @@
 // with the one drawn for it, and any can be switched to.
 //
 //   sankofa-gui [open] [--look L] [--picture P] [--still] [repo...]
-//   sankofa-gui render --out file.png [--look L] [--picture P] [--now TS] [--size WxH] [--at SECONDS] [--select ID] [repo...]
+//   sankofa-gui render --out file.png [--look L] [--picture P] [--now TS] [--size WxH] [--at SECONDS] [--select ID] [--about] [repo...]
 //   sankofa-gui scene [--now TS] [repo...]      the scene as text (what the tests read)
 //   sankofa-gui version
 //
@@ -34,6 +34,7 @@ static class Program
         DateTimeOffset? now = null;
         int width = 1280, height = 800;
         double at = 1.3;
+        var about = false;
         var still = Environment.GetEnvironmentVariable("SANKOFA_GUI_MOTION") == "0";
         var repos = new List<string>();
         for (var i = 0; i < argv.Count; i++)
@@ -51,6 +52,7 @@ static class Program
                     case "--now": now = DateTimeOffset.Parse(Next(), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal); break;
                     case "--at": at = double.Parse(Next(), CultureInfo.InvariantCulture); break;
                     case "--still": still = true; break;
+                    case "--about": about = true; break;
                     case "--size":
                         var wh = Next().Split('x');
                         width = Math.Clamp(int.Parse(wh[0], CultureInfo.InvariantCulture), 64, 8192);
@@ -73,7 +75,7 @@ static class Program
                 return 0;
             case "help" or "--help" or "-h":
                 Console.WriteLine("usage: sankofa-gui [open] [--look windows|mac|breeze|omarchy] [--picture constellation|map|heatmap|radar] [--still] [repo...]");
-                Console.WriteLine("       sankofa-gui render --out file.png [--look L] [--picture P] [--now TS] [--size WxH] [--at S] [--select ID] [repo...]");
+                Console.WriteLine("       sankofa-gui render --out file.png [--look L] [--picture P] [--now TS] [--size WxH] [--at S] [--select ID] [--about] [repo...]");
                 Console.WriteLine("       sankofa-gui scene [--now TS] [repo...] | version");
                 return 0;
         }
@@ -109,6 +111,7 @@ static class Program
                 .SetupWithoutStarting();
             var w = new MainWindow(board, files, chosen, picture, !still, clock, at) { Width = width, Height = height };
             if (select is not null) w.Select(select);
+            if (about) w.SetAbout(true);
             w.Show();
             Dispatcher.UIThread.RunJobs();
             AvaloniaHeadlessPlatform.ForceRenderTimerTick();

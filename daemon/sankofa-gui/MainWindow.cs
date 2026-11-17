@@ -27,6 +27,9 @@ sealed class MainWindow : Window
     readonly TextBlock status = new() { VerticalAlignment = VerticalAlignment.Center, FontSize = 12 };
     readonly StackPanel side = new() { Spacing = 12, Margin = new Thickness(16) };
     readonly Border top = new(), sideBox = new();
+    readonly Panel root = new();
+    Control? aboutLayer;
+    bool aboutOpen;
     readonly Stopwatch sw = Stopwatch.StartNew();
     readonly bool motion;
     Look look;
@@ -45,18 +48,27 @@ sealed class MainWindow : Window
         Width = 1280; Height = 800; MinWidth = 860; MinHeight = 560;
 
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), RowDefinitions = new RowDefinitions("Auto,*") };
-        var bar = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"), Margin = new Thickness(14, 8) };
+        var bar = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,Auto"), Margin = new Thickness(14, 8) };
         var name = new TextBlock { Text = "sankofa", FontWeight = FontWeight.Bold, FontSize = 15, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 18, 0) };
         bar.Children.Add(name);
         Grid.SetColumn(tabs, 1); bar.Children.Add(tabs);
         Grid.SetColumn(status, 2); bar.Children.Add(status);
+        var info = new Button
+        {
+            Content = "\u24d8", FontSize = 15, Padding = new Thickness(8, 2), Margin = new Thickness(10, 0, 0, 0),
+            Background = Brushes.Transparent, BorderThickness = new Thickness(0), VerticalAlignment = VerticalAlignment.Center,
+        };
+        ToolTip.SetTip(info, "About sankofa (Ctrl+I)");
+        info.Click += (_, _) => SetAbout(!aboutOpen);
+        Grid.SetColumn(info, 3); bar.Children.Add(info);
         top.Child = bar;
         Grid.SetColumnSpan(top, 2); grid.Children.Add(top);
         Grid.SetRow(stage, 1); grid.Children.Add(stage);
         sideBox.Width = 320;
         sideBox.Child = new ScrollViewer { Content = side, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
         Grid.SetRow(sideBox, 1); Grid.SetColumn(sideBox, 1); grid.Children.Add(sideBox);
-        Content = grid;
+        root.Children.Add(grid);
+        Content = root;
 
         foreach (var v in views)
         {
@@ -70,6 +82,8 @@ sealed class MainWindow : Window
         {
             if (e.Key is >= Key.D1 and <= Key.D4) { Show((Picture)(e.Key - Key.D1)); e.Handled = true; }
             else if (e.Key == Key.Q && e.KeyModifiers.HasFlag(KeyModifiers.Control)) Close();
+            else if (e.Key == Key.I && e.KeyModifiers.HasFlag(KeyModifiers.Control)) { SetAbout(!aboutOpen); e.Handled = true; }
+            else if (e.Key == Key.Escape && aboutOpen) SetAbout(false);
             else if (e.Key == Key.Escape) { picked = null; Refresh(false); }
         };
 
@@ -95,6 +109,19 @@ sealed class MainWindow : Window
     }
 
     void Show(Picture p) { picture = p; Apply(); Refresh(false); }
+
+    /// <summary>Opens or closes the About card (Ctrl+I, the ⓘ in the bar; Esc or a click outside closes it).</summary>
+    public void SetAbout(bool open)
+    {
+        aboutOpen = open;
+        if (aboutLayer is not null) aboutLayer.IsVisible = open;
+    }
+
+    void OpenLink(string url)
+    {
+        try { _ = Launcher.LaunchUriAsync(new Uri(url)); }
+        catch (Exception) { /* no browser to hand it to: the address is on the card to copy */ }
+    }
 
     /// <summary>Colours and the tab row, after a look or picture change.</summary>
     void Apply()
@@ -124,6 +151,11 @@ sealed class MainWindow : Window
         }
         foreach (var v in views) v.P = pal;
         stage.Child = views[(int)picture];
+        // The About card takes the look's colours too, so it is rebuilt with them.
+        if (aboutLayer is not null) root.Children.Remove(aboutLayer);
+        aboutLayer = About.Layer(pal, () => SetAbout(false), OpenLink);
+        aboutLayer.IsVisible = aboutOpen;
+        root.Children.Add(aboutLayer);
     }
 
     static IBrush B(Color c, double a = 1) => new SolidColorBrush(c, a);
@@ -217,7 +249,7 @@ sealed class MainWindow : Window
             foreach (var o in scene.Open.Take(6))
                 side.Children.Add(T($"{o.Title.Split(' ')[0]}  {o.Text}", 12));
         }
-        side.Children.Add(T("1–4 switch pictures · Esc clears · Ctrl+Q quits", 11, pal.Dim, wrap: true));
+        side.Children.Add(T("1–4 switch pictures · Esc clears · Ctrl+I about · Ctrl+Q quits", 11, pal.Dim, wrap: true));
     }
 
     IEnumerable<Pick> AllPicks() =>
