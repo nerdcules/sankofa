@@ -1,3 +1,5 @@
+<img src="docs/sankofa.svg" width="72" alt="">
+
 # sankofa
 
 *Sankofa* (Akan): "go back and fetch it." The bird that looks back to pick up

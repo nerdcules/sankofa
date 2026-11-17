@@ -58,6 +58,7 @@ usage: sankofa <command> [args]
   watch rm [dir]       stop watching a repo
   watch serve|once     the desktop notifier itself (what the sankofa-watch service runs)
   version
+  about                what sankofa is, whose idea, the licence
 
 Ledger: <repo>/.sankofa/ledger.jsonl, append-only.
 Config: <repo>/.sankofa/config, lines of key=value. Keys: require_note=0|1
@@ -96,6 +97,16 @@ last ledger write. A reply that only answers a question is never blocked.
             case "last": return Items.Last(rest);
             case "log": return Items.Log();
             case "version" or "-V" or "--version": Out.Line($"sankofa {Store.Version}"); return 0;
+            case "about":
+                Out.Line($"S A N K O F A  {Store.Version}");
+                Out.Line("");
+                Out.Line("A handoff ledger that lets many AI coding sessions work on one");
+                Out.Line("codebase without stepping on each other.");
+                Out.Line("");
+                Out.Line("An idea by Alan Seunarayan, developed with AI");
+                Out.Line("MIT licence");
+                Out.Line("github.com/nerdcules/sankofa");
+                return 0;
             case "" or "help" or "-h" or "--help": Console.Out.Write(Usage + "\n"); return 0;
             case "hook": return Hook.Run(rest);
             case "claim": return Leases.Claim(rest);
