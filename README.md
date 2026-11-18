@@ -72,6 +72,12 @@ exist for Claude Code (hooks and MCP) and Codex (hook and MCP); the git gate
 covers the rest. It is a substrate, not an agent: it records and answers, it
 never decides.
 
+Away from the desk, [Fathom](https://github.com/nerdcules/fathom) 0.2.0 (a
+desktop layer for Omarchy) shows the ledger on a paired phone: each repo's
+open items, the leases held and the last note, from `sankofa events --all`.
+An item that needs you becomes a phone alert, and its Done button runs
+`sankofa done` in that repo, on the laptop.
+
 ## Numbers
 
 Each part shipped with a simulation that drives the real code through a week
