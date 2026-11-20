@@ -6,6 +6,9 @@
 # usage: build.sh <dist-tree> <version> <x64|arm64> <out-dir>
 set -eu
 src=$1; ver=$2; arch=$3; out=$4
+# dpkg reads 1.2.0-rc.1 as 1.2.0 with Debian revision rc.1, newer than 1.2.0; with ~ it
+# sorts before it, as a pre-release should. The file keeps the tag's spelling.
+deb_ver=$(printf '%s' "$ver" | sed 's/-/~/')
 case $arch in x64) deb_arch=amd64 ;; arm64) deb_arch=arm64 ;; *) echo "deb: unknown arch $arch" >&2; exit 1 ;; esac
 w=$(mktemp -d)
 trap 'rm -rf "$w"' EXIT
@@ -38,7 +41,7 @@ install -Dm644 "$src/hooks/codex/README.md" "$r/usr/share/doc/sankofa/codex.md"
 mkdir -p "$w/ctl"
 cat > "$w/ctl/control" <<CTL
 Package: sankofa
-Version: $ver
+Version: $deb_ver
 Architecture: $deb_arch
 Maintainer: nerdcules <nerdcules@users.noreply.github.com>
 Installed-Size: $(du -sk "$r" | cut -f1)

@@ -6,6 +6,9 @@ and the dashboards. A Linux desktop, a Mac laptop and a Windows machine share
 one ledger through a hub, and hand branches to each other through a git
 remote, without knowing what the others run. Every file below is on the
 [releases page](https://github.com/nerdcules/sankofa/releases/latest).
+Pre-releases (tags such as `v1.2.0-rc.1`) are marked as pre-releases there
+and are never the latest; take one from the
+[list of releases](https://github.com/nerdcules/sankofa/releases) to try it.
 
 ## Linux
 

@@ -163,8 +163,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           ls -la out
+          # A tag with a pre-release part (v1.2.0-rc.1) is published as a
+          # pre-release, so releases/latest (get.sh) never hands it out.
+          pre=; case "$GITHUB_REF_NAME" in *-*) pre=--prerelease ;; esac
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" out/* --clobber
           else
-            gh release create "$GITHUB_REF_NAME" out/* --title "sankofa $GITHUB_REF_NAME" --notes-file notes.md
+            gh release create "$GITHUB_REF_NAME" out/* --title "sankofa $GITHUB_REF_NAME" --notes-file notes.md $pre
           fi

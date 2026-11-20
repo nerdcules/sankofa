@@ -79,6 +79,15 @@ runs `make test` on Linux and macOS and, on Windows, the xUnit tests plus
    The one-line installer (`get.sh`, Linux and macOS) and the links in
    `INSTALL.md` point at the latest release.
 
+A pre-release is a tag with a pre-release part, `v1.2.3-rc.1`: tag and push
+it as in step 2, without changing `Store.cs` or the PKGBUILD (the workflow
+stamps the tag's number into the build, and a PKGBUILD `pkgver` can't hold a
+`-`, so the Arch package follows releases only). The workflow publishes it
+marked as a pre-release, so it is never "latest" and `get.sh` doesn't hand it
+out, and gives its `.deb` the version `1.2.3~rc.1`, which dpkg sorts before
+`1.2.3`. `nerdcules-update channel sankofa prerelease` (in the nerdcules
+repo) installs it from its tarball.
+
 Run the workflow by hand (Actions, "release", Run workflow) to build the
 packages without publishing: they stay as workflow artifacts.
 
